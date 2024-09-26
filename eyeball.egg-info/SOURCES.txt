@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+eyeball.egg-info/PKG-INFO
+eyeball.egg-info/SOURCES.txt
+eyeball.egg-info/dependency_links.txt
+eyeball.egg-info/requires.txt
+eyeball.egg-info/top_level.txt
+eyeball/scripts/test/test_usb_camera.py
+eyeball/utils/RS485MotorController.py
+eyeball/utils/USBcam.py
+eyeball/utils/__init__.py

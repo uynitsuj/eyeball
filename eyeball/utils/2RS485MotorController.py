@@ -7,19 +7,19 @@ from queue import Queue
 class RS485MotorController:
     def __init__(self, port, baudrate=115200, timeout=None):
         self.ser = serial.Serial(port, baudrate, timeout=timeout)
-        self.lock = threading.Lock()
-        self.response_event = threading.Event()  # Event to signal when a response is ready
+        # self.lock = threading.Lock()
+        # self.response_event = threading.Event()  # Event to signal when a response is ready
         self.responses = {}
-        self.command_queue = Queue()  # Queue to manage commands
+        # self.command_queue = Queue()  # Queue to manage commands
         self.response_bytes = 13
 
         # Start a separate thread for reading responses
-        self.response_thread = threading.Thread(target=self.read_response)
-        self.response_thread.start()
+        # self.response_thread = threading.Thread(target=self.read_response)
+        # self.response_thread.start()
 
-        # Start a thread to process queued commands
-        self.command_thread = threading.Thread(target=self.process_commands)
-        self.command_thread.start()
+        # # Start a thread to process queued commands
+        # self.command_thread = threading.Thread(target=self.process_commands)
+        # self.command_thread.start()
         
         self.ser.flushInput()    #flush input buffer, discarding all its contents
         self.ser.flushOutput()   #flush output buffer, aborting current output
@@ -48,45 +48,18 @@ class RS485MotorController:
             frame.append(self.calculate_checksum(data))
 
         b = bytearray(frame)
-        self.command_queue.put(b)  # Queue the command instead of sending it directly
-
-    def process_commands(self):
-        """
-        Process commands from the command queue and write them to the serial port.
-        This allows for non-blocking command sending.
-        """
-        while True:
-            if not self.command_queue.empty():
-                command = self.command_queue.get()
-                # with self.lock:
-                self.ser.write(command)
+        self.ser.write(b)  # Queue the command instead of sending it directly
 
     def read_response(self):
         """
         Continuously read responses from the motor.
         """
-        while True:
-            try:
-                if self.ser.in_waiting > 0:
-                    response = self.ser.read(self.response_bytes)
-                    print(f"Raw response (Hex): {[f'0x{byte:02X}' for byte in response]}")
-                    motor_id = response[2]
-                    self.responses[motor_id] = response
-                    self.response_event.set()  # Signal that a response has been received
-            except OSError as e:
-                print(f"Error reading from serial port: {e}")
-                break
-
-    def get_response(self, motor_id, timeout=2):
-        """
-        Wait for a response from the motor asynchronously.
-        """
-        self.response_event.clear()
-        if self.response_event.wait(timeout):
-            return self.responses.get(motor_id)
-        else:
-            print(f"Timeout waiting for response from motor {motor_id}")
-            return None
+        start_time = time.time()
+        response = self.ser.read(self.response_bytes)
+        print(f"Time taken to read response: {time.time() - start_time}")
+        # print(f"Raw response (Hex): {[f'0x{byte:02X}' for byte in response]}")
+        motor_id = response[2]
+        self.responses[motor_id] = response
 
     def parse_response(self, response):
         if len(response) < 13:
@@ -156,13 +129,17 @@ class RS485MotorController:
         if maxspeed is None:
             target_angle_fixed = int(target_angle * 100)
             angle_data = list(struct.pack('<Q', target_angle_fixed))
+            start_time = time.time()
             self.send_command(motor_id, 0xA3, angle_data)
+            print(f"Time taken to send command: {time.time() - start_time}")
+            self.read_response()
         else:
             target_angle_fixed = int(target_angle * 100)
             maxspeed_fixed = int(maxspeed * 100)
             angle_data = list(struct.pack('<Q', target_angle_fixed))
             maxspeed_data = list(struct.pack('<L', maxspeed_fixed))
             self.send_command(motor_id, 0xA4, angle_data + maxspeed_data)
+            self.read_response()
 
     def close(self):
         self.ser.close()
@@ -175,10 +152,8 @@ if __name__ == "__main__":
     while True:
         for angle in range(45, 135):
             controller.multi_loop_angle_control(1, angle)
-            # time.sleep(0.001)
             controller.multi_loop_angle_control(2, angle)
 
-            # Process responses asynchronously
             # for motor_id, response in controller.responses.items():
             #     if response:
             #         parsed_response = controller.parse_response(response)

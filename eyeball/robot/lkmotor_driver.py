@@ -343,9 +343,9 @@ class Robot(Serializer):
     def motors_count (self):
         return len(self.__motors)
 
-    def goto_zero(self, speed: float = 500):
+    def goto_zero(self, speed: float = 36000):
         for motor in self.motors:
-            motor.abs_multi_loop_angle_speed(0, speed)
+            motor.abs_multi_loop_angle_speed(motor.zero_angle, speed)
         self.wait_stop()
 
     # Will rotate each motor to reach angle with multiturn (multiloop). No direction selection. I.e 1 deg -> 355deg will run whole loop
@@ -501,10 +501,12 @@ class Robot(Serializer):
 if __name__ == '__main__':
      
     robot = Robot("ttyUSB0")
-    robot.add_motor(0x01, 0.1, "motor1", True, 30.0, [0.0, 0.0, 0.0], "YZ")
-    robot.add_motor(0x02, 0.1, "motor2", True, 120.0, [0.0, 0.0, 0.0], "YZ")
+    robot.add_motor(0x01, 0.1, "motor1", True, -50.0, [0.0, 0.0, 0.0], "YZ")
+    robot.add_motor(0x02, 0.1, "motor2", True, 0.0, [0.0, 0.0, 0.0], "YZ")
 
     robot.goto_zero()
 
-    for motor in robot.motors:
-        motor.set_zero_cur_position()
+    # for i, motor in enumerate(robot.motors):
+    #     if i == 1:
+    #         motor.set_zero_cur_position()
+    #         print(f"Motor {i} zero angle: {motor.zero_angle}")

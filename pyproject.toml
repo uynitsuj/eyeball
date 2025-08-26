@@ -9,6 +9,7 @@ requires-python = ">=3.8"
 dependencies = [
     "numpy",
     "pyserial",
+    "opencv-python",
 ]
 
 [tool.setuptools]

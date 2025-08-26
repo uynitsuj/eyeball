@@ -333,51 +333,51 @@ class Motor():
 
     # ---------------- Control Modes ----------------
 
-    def open_loop_power(self, power_ctrl: int):
-        """
-        Open-loop power/iq drive.
+    # def open_loop_power(self, power_ctrl: int):
+    #     """
+    #     Open-loop power/iq drive.
 
-        Args:
-            power_ctrl: int16 in device-defined range (e.g., [-850, 850]).
+    #     Args:
+    #         power_ctrl: int16 in device-defined range (e.g., [-850, 850]).
 
-        Behavior:
-            Sends CMD 0xA0 with int16 payload, then reads state2 snapshot.
+    #     Behavior:
+    #         Sends CMD 0xA0 with int16 payload, then reads state2 snapshot.
 
-        Returns:
-            dict from `read_state2()`.
-        """
-        payload = struct.pack("<h", int(power_ctrl))
-        self._send(0xA0, payload, 8)  # short ack
-        return self.read_state2()
+    #     Returns:
+    #         dict from `read_state2()`.
+    #     """
+    #     payload = struct.pack("<h", int(power_ctrl))
+    #     self._send(0xA0, payload, 8)  # short ack
+    #     return self.read_state2()
 
-    def torque_control(self, iq_ctrl: int):
-        """
-        Closed-loop torque (iq) control.
+    # def torque_control(self, iq_ctrl: int):
+    #     """
+    #     Closed-loop torque (iq) control.
 
-        Args:
-            iq_ctrl: int16 iq command (device-defined scale).
+    #     Args:
+    #         iq_ctrl: int16 iq command (device-defined scale).
 
-        Returns:
-            dict from `read_state2()`.
-        """
-        payload = struct.pack("<h", int(iq_ctrl))
-        self._send(0xA1, payload, 8)
-        return self.read_state2()
+    #     Returns:
+    #         dict from `read_state2()`.
+    #     """
+    #     payload = struct.pack("<h", int(iq_ctrl))
+    #     self._send(0xA1, payload, 8)
+    #     return self.read_state2()
 
-    def speed_control(self, speed_dps: float):
-        """
-        Closed-loop speed control in deg/s.
+    # def speed_control(self, speed_dps: float):
+    #     """
+    #     Closed-loop speed control in deg/s.
 
-        Args:
-            speed_dps: target speed in deg/s (converted to 0.01 dps/LSB for the wire).
+    #     Args:
+    #         speed_dps: target speed in deg/s (converted to 0.01 dps/LSB for the wire).
 
-        Returns:
-            dict from `read_state2()`.
-        """
-        val = int(round(speed_dps * 100))
-        payload = struct.pack("<i", val)
-        self._send(0xA2, payload, 10)
-        return self.read_state2()
+    #     Returns:
+    #         dict from `read_state2()`.
+    #     """
+    #     val = int(round(speed_dps * 100))
+    #     payload = struct.pack("<i", val)
+    #     self._send(0xA2, payload, 10)
+    #     return self.read_state2()
 
     def abs_multi_loop_angle_cmd1(self, angle_deg: float):
         """
@@ -391,8 +391,14 @@ class Motor():
         """
         val = int(round(angle_deg * 100))
         payload = struct.pack("<q", val)  # int64
-        self._send(0xA3, payload, 13)
-        return self.read_state2()
+        res = self._send(0xA3, payload, 13)
+        d = res[5:12]
+        temp = struct.unpack("<b", d[0:1])[0]
+        iq_or_power = struct.unpack("<h", d[1:3])[0]
+        speed_dps = struct.unpack("<h", d[3:5])[0]
+        encoder = struct.unpack("<H", d[5:7])[0]
+
+        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
 
     def abs_single_loop_angle_cmd1(self, angle_deg: float, cw: bool):
         """
@@ -411,8 +417,13 @@ class Motor():
         angle_ticks = int(round(angle_deg * 100)) % 36000
         spin = 0x00 if cw else 0x01
         payload = struct.pack("<BHB", spin, angle_ticks, 0x00)
-        self._send(0xA5, payload, 10)
-        return self.read_state2()
+        res = self._send(0xA5, payload, 10)
+        d = res[5:12]
+        temp = struct.unpack("<b", d[0:1])[0]
+        iq_or_power = struct.unpack("<h", d[1:3])[0]
+        speed_dps = struct.unpack("<h", d[3:5])[0]
+        encoder = struct.unpack("<H", d[5:7])[0]
+        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
 
     def inc_angle_cmd1(self, delta_deg: float):
         """
@@ -526,27 +537,71 @@ class Motor():
 
     # ---------------- PID & Identification ----------------
 
-    def pid_read(self, param_id: int):
+    def pid_read(self, param_id: int) -> dict:
         """
-        Read a 6-byte PID/config block from RAM for the given parameter ID.
+        Read PID/config parameters for a given ParamID.
 
         Args:
-            param_id: Parameter selector (see device table).
-
-        Protocol:
-            CMD 0x40, payload = [param_id, 0x00].
-            Reply: 13 bytes; first data byte echoes param_id followed by 6 bytes.
+            param_id: Parameter selector (see datasheet table).
 
         Returns:
-            (param_id:int, values:bytes[6])
+            dict with:
+                - 'param_id': echoed param id
+                - 'raw': raw 6-byte payload (bytes)
+                - 'decoded': structured interpretation (dict), if known
         """
-        payload = struct.pack("<BB", param_id & 0xFF, 0x00)
-        res = self._send(0x40, payload, 13)
-        d = res[5:12]
-        pid = d[0]
-        vals = d[1:]
-        return pid, vals
+        # import pdb; pdb.set_trace()
+        # int to hex
+        # param_id = hex(param_id)
+        # print(param_id)
+        payload = struct.pack("<BB", param_id, 0x00)
+        res = self._send(0x40, payload)
 
+        echoed = res[5]
+        raw6 = res[6:12]
+
+        return {
+            "param_id": echoed,
+            "raw": raw6,
+            "decoded": self._decode_pid_block(echoed, raw6),
+        }
+
+
+    def _decode_pid_block(self, param_id: int, raw6: bytes) -> dict | None:
+        """
+        Decode the 6-byte parameter block according to the datasheet table.
+        Returns None if param_id is unknown.
+        """
+        if param_id == 0x96:  # 150 decimal, Angle PID
+            kp, ki, kd = struct.unpack("<HHH", raw6)
+            return {"anglePidKp": kp, "anglePidKi": ki, "anglePidKd": kd}
+        elif param_id == 0x97:  # Speed PID
+            kp, ki, kd = struct.unpack("<HHH", raw6)
+            return {"speedPidKp": kp, "speedPidKi": ki, "speedPidKd": kd}
+        elif param_id == 0x98:  # Current PID
+            kp, ki, kd = struct.unpack("<HHH", raw6)
+            return {"currentPidKp": kp, "currentPidKi": ki, "currentPidKd": kd}
+        elif param_id == 0x99:  # maxTorqueCurrent (int16)
+            (val,) = struct.unpack("<h", raw6[:2])
+            return {"maxTorqueCurrent": val}
+        elif param_id == 0x9A:  # maxSpeed (int32)
+            (val,) = struct.unpack("<i", raw6[:4])
+            return {"maxSpeed": val}
+        elif param_id == 0x9B:  # low 4 bytes of maxAngle
+            (val,) = struct.unpack("<i", raw6[:4])
+            return {"maxAngle_low": val}
+        elif param_id == 0x9C:  # high 4 bytes of maxAngle
+            (val,) = struct.unpack("<i", raw6[:4])
+            return {"maxAngle_high": val}
+        elif param_id == 0x9D:  # currentRamp
+            (val,) = struct.unpack("<h", raw6[:2])
+            return {"currentRamp": val}
+        elif param_id == 0x9E:  # speedRamp
+            (val,) = struct.unpack("<i", raw6[:4])
+            return {"speedRamp": val}
+        else:
+            return None
+    
     def pid_write_ram(self, param_id: int, six_bytes: bytes):
         """
         Write a 6-byte PID/config block to RAM (volatile).
@@ -657,98 +712,7 @@ class Motor():
             "header_crc_ok": header_crc_ok, "data_crc_ok": data_crc_ok
         }
 
-    # ---------- PID decode helpers ----------
 
-    @staticmethod
-    def _interpret_six_bytes(data6: bytes) -> dict:
-        """
-        Provide multiple 'views' of a 6-byte PID/config block for quick sanity-checking.
-        Useful when documentation for a particular param_id is unclear.
-        """
-        if len(data6) != 6:
-            raise ValueError("data6 must be exactly 6 bytes")
-
-        u8 = list(data6)
-        u16 = struct.unpack("<3H", data6)     # three unsigned 16-bit
-        s16 = struct.unpack("<3h", data6)     # three signed 16-bit
-
-        # Common fixed-point guesses (adjust to taste when you learn the real scalings):
-        # e.g., gains often come as integers, speeds/angles as centi-units.
-        view = {
-            "u8": u8,
-            "u16": {"v0": u16[0], "v1": u16[1], "v2": u16[2]},
-            "s16": {"v0": s16[0], "v1": s16[1], "v2": s16[2]},
-            "as_float_div10":  [x / 10.0 for x in u16],
-            "as_float_div100": [x / 100.0 for x in u16],
-            "as_float_div1000":[x / 1000.0 for x in u16],
-        }
-        return view
-
-    # Optional: known param registry (fill in as you learn your model’s table)
-    # Maps param_id -> tuple of ("name", [("field", "fmt", scale), ...])
-    # fmt: "u16" or "s16"; scale is a divisor (1, 10, 100, ...)
-    _PID_REGISTRY = {
-        # EXAMPLES ONLY — replace with your device’s real map when you have it.
-        # 0x90: ("speed_loop", [("kp","u16",1), ("ki","u16",1), ("kd","u16",1)]),
-        # 0x91: ("pos_loop",   [("kp","u16",1), ("ki","u16",1), ("kd","u16",1)]),
-        # 0xA0: ("limits",     [("max_speed_dps","u16",1), ("max_accel_dps2","u16",1), ("iq_limit","u16",1)]),
-        # 0x96: ("(unknown_0x96)", [("v0","u16",1), ("v1","u16",1), ("v2","u16",1)]),
-    }
-
-    @classmethod
-    def _decode_pid_by_registry(cls, param_id: int, data6: bytes) -> dict | None:
-        """
-        If the param_id exists in _PID_REGISTRY, decode it to named fields using the
-        specified formats and scales. Otherwise return None.
-        """
-        spec = cls._PID_REGISTRY.get(param_id & 0xFF)
-        if spec is None:
-            return None
-        name, fields = spec
-        vals = {}
-        # Pre-unpack once
-        u16 = struct.unpack("<3H", data6)
-        s16 = struct.unpack("<3h", data6)
-        for i, (field, fmt, scale) in enumerate(fields):
-            raw = u16[i] if fmt == "u16" else s16[i]
-            vals[field] = raw / float(scale)
-        return {"name": name, "fields": vals}
-
-    def pid_read_verbose(self, param_id: int) -> dict:
-        """
-        Read a PID/config block and return a rich, human-friendly dict with:
-        - echo_id: echoed param_id from device
-        - raw6: hex string of the six data bytes
-        - header_crc_ok / data_crc_ok: checksum results
-        - views: multiple interpretations (u8/u16/s16 and common fixed-point scalings)
-        - registry_decode (if available): named, scaled fields from _PID_REGISTRY
-
-        This is ideal for debugging when devices reply with zeros or unexpected IDs.
-        """
-        payload = struct.pack("<BB", param_id & 0xFF, 0x00)
-        res = self._send(0x40, payload, 13)
-        parsed = self._parse_reply(res)
-        info = {
-            "request_id": param_id & 0xFF,
-            "header_crc_ok": parsed["header_crc_ok"],
-            "data_crc_ok": parsed["data_crc_ok"],
-            "reply_cmd": parsed["cmd"],
-            "reply_id": parsed["id"],
-            "echo_id": None,
-            "raw6": None,
-            "views": None,
-            "registry_decode": None,
-        }
-        if parsed["data_len"] < 7:
-            return info
-
-        echo_id = parsed["data"][0]
-        data6 = parsed["data"][1:7]
-        info["echo_id"] = echo_id
-        info["raw6"] = " ".join(f"{b:02X}" for b in data6)
-        info["views"] = self._interpret_six_bytes(data6)
-        info["registry_decode"] = self._decode_pid_by_registry(echo_id, data6)
-        return info
 
     def move_abs_multi(self, angle_deg: float, speed_dps: float | None = None):
         """
@@ -854,8 +818,14 @@ class Motor():
         else:  #if no serial port than simulate
             res = 1
             self.__cur_multi_loop_angle = angle
+            
+        d = res[5:12]
+        temp = struct.unpack("<b", d[0:1])[0]
+        iq_or_power = struct.unpack("<h", d[1:3])[0]
+        speed_dps = struct.unpack("<h", d[3:5])[0]
+        encoder = struct.unpack("<H", d[5:7])[0]
+        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
 
-        return res
 
     def inc_angle_speed(self, angle: float, speed: float):
         assert speed > 0, "Speed must be grater than zero"
@@ -1190,9 +1160,16 @@ if __name__ == '__main__':
     robot.add_motor(0x01, 0.1, "motor1", True, 0.0, [0.0, 0.0, 0.0], "YZ")
     robot.add_motor(0x02, 0.1, "motor2", True, 0.0, [0.0, 0.0, 0.0], "YZ")
 
-    # robot.goto_zero()
+    robot.goto_zero()
+    
+    while True:
+        for motor in robot.motors:
+            # print(motor.read_state2())
+            print(motor.pid_read(150))
 
     ang = np.linspace(-30.0, 30.0, 2)
+    # ang = np.linspace(-0.5, 0.5, 2)
+
     counter = 0
     import time
     while True:
@@ -1200,6 +1177,7 @@ if __name__ == '__main__':
         t0 = time.time()
         for motor in robot.motors:
             print(motor.move_abs_multi(ang[counter]))
+            # motor.move_abs_multi(ang[counter])
         t1 = time.time()
         # print(f"time: {t1 - t0}")
         print(f"hz: {1 / (t1 - t0)}")
@@ -1207,11 +1185,13 @@ if __name__ == '__main__':
             counter -= 1
         else:
             counter += 1
+            
+        time.sleep(0.3)
 
 
 
-    for i, motor in enumerate(robot.motors):
-        print(motor.read_encoder())
+    # for i, motor in enumerate(robot.motors):
+    #     print(motor.read_encoder())
     #     if i == 1:
     #         motor.set_zero_cur_position()
     #         print(f"Motor {i} zero angle: {motor.zero_angle}")

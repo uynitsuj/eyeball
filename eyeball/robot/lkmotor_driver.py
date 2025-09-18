@@ -869,19 +869,32 @@ class LKMotorChain(Serializer):
         self.wait_stop()
 
     # Will rotate each motor to reach angle with multiturn (multiloop). No direction selection. I.e 1 deg -> 355deg will run whole loop
-    def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list):
+    # def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list = None):
 
-        assert len(angles) == len(speeds) == len(self.motors), "Ammout of motors, speeds and angles must be same"
+    #     assert len(angles) == len(speeds) == len(self.motors), "Ammout of motors, speeds and angles must be same"
 
-        for motor, angle, speed in zip(self.motors, angles, speeds):
-            try:
-                angle = float(angle)
-                speed = float(speed)
-            except ValueError as e:
-                print("Error in robot.goto_abs_multi_loop_angles_speeds", str(e))
-                exit()
-            motor.abs_multi_loop_angle_speed(angle, speed)
-        self.wait_stop()
+    #     for motor, angle, speed in zip(self.motors, angles, speeds):
+    #         try:
+    #             angle = float(angle)
+    #             speed = float(speed)
+    #         except ValueError as e:
+    #             print("Error in robot.goto_abs_multi_loop_angles_speeds", str(e))
+    #             exit()
+    #         motor.abs_multi_loop_angle_speed(angle, speed)
+    #     self.wait_stop()
+    
+    def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list = None):
+        results = list()
+        idxs = range(len(self.motors))
+        for idx, motor, angle in zip(idxs, self.motors, angles):
+            if speeds is None:
+                speed = None
+            else:
+                speed = speeds[idx]
+            res = motor.move_abs_multi(angle, speed_dps=speed)
+            results.append(res)
+        # self.wait_stop()
+        return results
 
     def goto_abs_single_loop_angles_speeds(self, angles: list, speeds: list, dirs: list):
         assert len(angles) == len(speeds) == len(dirs) == len(self.motors), "Ammout of motors, speeds and angles and directions must be same"
@@ -916,107 +929,6 @@ class LKMotorChain(Serializer):
         
         return results        
 
-    # Calculates coordinates usng angles
-    def sim_angles_to_coords(self, angles: np.array) -> np.array:
-        T       = np.identity(4)
-        result  = list()
-        P       = list()
-
-        for motor, angle in zip(self.motors, angles):
-            try:
-                angle   = float(angle)
-                Tm      = motor.T(angle)
-                T       = np.matmul(T, Tm)
-                P.append([0]) # build 1 coloum matrix
-            except ValueError as e:
-                print("Error in sim_angles_to_coords", str(e))
-                exit()
-
-        P.append([1]) # end of creating matrix 1 coloumn. Last one is scale factor
-
-        R = np.dot(T, np.array(P))
-
-        for r in R[:-1]: result.append(r[0])
-
-        return np.array(result)
-    
-    # Calculates chains angles using from target XYZ coordinates
-    #@time_of_function
-    def sim_coords_to_angles(self, target: np.array, guess: np.array): # -> np.array, np.array:
-        def is_dir_cw(s_angle, e_angle):
-            delta = e_angle - s_angle
-            if delta < 0: delta = 360 + delta
-            return (True if (delta < 180) else False)
-
-        def jacobian(f, x: np.array, h = 0.01):
-            n   = len(x)
-            Jac = np.zeros([n,n])
-            f0  = f(x)
-            
-
-            for i in range(0, n, 1):
-                tt      = x[i]
-                x[i]    = tt + h
-
-                f1      = f(x)
-                x[i]    = tt
-                Jac [:,i] = (f1 - f0)/h
-            return Jac, f0
-        
-        def newton(f, x: np.array, tol=1.0e-2, h = 0.002):
-            iterMax = 350
-            for i in range(iterMax):
-                Jac, fO = jacobian(f, x, h)
-                err = math.sqrt(np.dot(fO, fO) / len(x))
-
-                if err < tol:   return x, i
-
-                dx = np.linalg.solve(Jac, fO)
-                x = x - dx
-            raise ("Too many iterations for the Newton method")
-        
-        def f(x: np.array):
-            f = np.zeros([3])
-            r = self.sim_angles_to_coords([x[0], x[1], x[2]])
-            f = r - target
-
-            return f
-
-        
-        #guess is angles
-        r, iter = newton(f, guess)
-         
-        # TODO: this area sould be reconsidered for linear axises
-
-        dirs = list()
-        angles = list()
-    
-        for a, g in zip(r, guess):
-            new_a = a - int(a / 360) * 360  #Reduce angles to range +/- 360 deg or U get > 360 deg    Means remove multiturns
-            
-            new_a = round(new_a, 4)
-            if new_a == 360 : new_a = 0   #fix jams when after round it is 360 deg and passed functions which acceprt up to 359.99
-
-            if new_a < 0: new_a = 360 + new_a   #Make angle positive
-
-            # Directions To make rotations shortest
-            # example: was 10 deg. We go to 358 deg => CCW was 10 deg go to 180 => CW
-            dirs.append(is_dir_cw(g, new_a))
-            angles.append(round(new_a))
-
-        #result and tolerance
-
-        C_XYZ = self.sim_angles_to_coords(angles)
-        TOL = [ (C_XYZ[0] - target[0]).round(4), 
-                (C_XYZ[1] - target[1]).round(4),
-                (C_XYZ[2] - target[2]).round(4) ]
-      
-        return angles, TOL, dirs
-
-    def get_coords(self) -> np.array:
-        angles = self.get_single_loop_angles()
-        return self.sim_angles_to_coords(angles)
-
 # MAIN
 if __name__ == '__main__':
      
@@ -1025,30 +937,22 @@ if __name__ == '__main__':
     robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0)
 
     robot.goto_zero()
-    print("\n")
-    for motor in robot.motors:
-        print(motor.read_encoder())
-        print(motor.get_multi_loop_angle())
-        print(motor.get_single_loop_angle())
-    print("\n")
-    
-    # while True:
-    #     for motor in robot.motors:
-    #         # print(motor.read_state2())
-    #         print(motor.pid_read(150))
 
-    ang = np.linspace(-30.0, 30.0, 15)
-    # ang = np.linspace(-0.5, 0.5, 2)
+
+    ang = np.linspace(-30.0, 30.0, 8)
 
     counter = 0
     up = True
     import time
     while True:
-        print(f"angle: {ang[counter]}")
+        print("\n")
+        print(f"Commanded angle: {ang[counter]}")
         t0 = time.time()
-        for motor in robot.motors:
-            res = motor.move_abs_multi(ang[counter])
-            print(res)
+        res = robot.goto_abs_multi_loop_angles_speeds([ang[counter], ang[counter]])
+        print(res)
+        # for motor in robot.motors:
+        #     res = motor.move_abs_multi(ang[counter])
+        #     print(res)
             # print(res["encoder"] * 0.02)
             # motor.move_abs_multi(ang[counter])
         t1 = time.time()

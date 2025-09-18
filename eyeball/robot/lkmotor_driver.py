@@ -7,7 +7,10 @@ import numpy as np
 import serial, json
 from concurrent.futures import ThreadPoolExecutor, Future
 import threading
-
+from eyeball.robot.robot import Robot, ActionSpec
+from dm_env.specs import Array
+from typing import Dict, Any
+from abc import abstractmethod
 
 CMD_HEADER                     = 0x3E
 CMD_ASK_MULTI_LOOP_ANGLE       = 0x92        #Read multi -loop Angle command
@@ -929,36 +932,164 @@ class LKMotorChain(Serializer):
         
         return results        
 
+class Eyeball(Robot):
+    def __init__(
+        self, 
+        port_name: str = "ttyUSB0"):
+
+        print(f"Initializing Eyeball robot on port {port_name}")
+        self.robot = LKMotorChain(port_name)
+        self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0)
+        self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0)
+
+        self.total_dof = len(self.robot.motors)
+
+        self._last_joint_pos = np.zeros(self.total_dof)
+        self._last_joint_vel = np.zeros(self.total_dof)
+
+
+    def goto_zero(self):
+        self.robot.goto_zero()
+
+    def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list = None):
+        return self.robot.goto_abs_multi_loop_angles_speeds(angles, speeds)
+
+        
+    def num_dofs(self) -> int:
+        """Get the number of controllable degrees of freedom of the robot.
+
+        Returns:
+            int: The number of controllable degrees of freedom of the robot.
+        """
+        return self.total_dof
+
+    def get_joint_pos(self) -> np.ndarray:
+        """Get the current joint positions of the robot in radians.
+
+        Returns:
+            np.ndarray: The current joint positions of the robot in radians.
+        """
+        return self._last_joint_pos
+    
+    def get_joint_vel(self) -> np.ndarray:
+        """Get the current joint velocities of the robot in radians per second.
+
+        Returns:
+            np.ndarray: The current joint velocities of the robot in radians per second.
+        """
+        return self._last_joint_vel
+
+    def get_joint_state(self) -> Dict[str, np.ndarray]:
+        """Get the current joint positions and velocities of the robot in radians.
+
+        Returns:
+            Dict[str, np.ndarray]: A dictionary containing the current joint positions and velocities of the robot in radians.
+        """
+        return {"joint_pos": self.get_joint_pos(), "joint_vel": self.get_joint_vel()}
+
+    def command_joint_pos(self, joint_pos: np.ndarray) -> None:
+        """Command the leader robot to a given state.
+
+        Args:
+            joint_pos (np.ndarray): The state to command the leader robot to.
+        """
+        ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos))
+        for i, ret_val in enumerate(ret):
+            self._last_joint_pos[i] = ret_val["angle"]
+            self._last_joint_vel[i] = ret_val["speed_dps"]
+
+    # def command_target_vel(self, joint_vel: np.ndarray) -> None:
+    #     """Command the leader robot to a given state.
+
+    #     Args:
+    #         joint_vel (np.ndarray): The state to command the leader robot to.
+    #     """
+    #     pass
+
+    def command_joint_state(self, joint_state: Dict[str, np.ndarray]) -> None:
+        """Command the leader robot to a given state.
+
+        Args:
+            joint_state (Dict[str, np.ndarray]): The state to command the leader robot to.
+        """
+        joint_pos = joint_state["joint_pos"]
+        joint_vel = joint_state["joint_vel"]
+        ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos), list(joint_vel))
+        for i, ret_val in enumerate(ret):
+            self._last_joint_pos[i] = ret_val["angle"]
+            self._last_joint_vel[i] = ret_val["speed_dps"]
+
+    def get_observations(self) -> Dict[str, np.ndarray]:
+        """Get the current observations of the robot.
+
+        This is to extract all the information that is available from the robot,
+        such as joint positions, joint velocities, etc. This may also include
+        information from additional sensors, such as cameras, force sensors, etc.
+
+        Returns:
+            Dict[str, np.ndarray]: A dictionary of observations.
+        """
+        return {"joint_pos": self.get_joint_pos()}
+
+    def joint_pos_spec(self) -> ActionSpec:
+        """Return the action specification for the robot, which includes the gripper."""
+        return Array(
+            shape=(self.num_dofs(),),
+            dtype=np.float32,
+        )
+
+    def joint_state_spec(self) -> ActionSpec:
+        """Return the action specification for the robot, which includes the gripper."""
+        return dict(
+            {
+                "pos": Array(
+                    shape=(self.num_dofs(),),
+                    dtype=np.float32,
+                ),
+                "vel": Array(
+                    shape=(self.num_dofs(),),
+                    dtype=np.float32,
+                ),
+            }
+        )
+
+    def get_robot_info(self) -> Dict[str, Any]:
+        """Get the robot information, such as kp, kd, joint limits, gripper limits, etc."""
+        return {
+            "num_dofs": self.num_dofs(),
+            "motor_info": [motor.read_driver_motor_info() for motor in self.robot.motors]}
+
+    # def get_robot_type(self) -> RobotType:
+    #     """Get the robot type."""
+    #     return RobotType.ARM
+
+
 # MAIN
 if __name__ == '__main__':
-     
-    robot = LKMotorChain("ttyUSB0")
-    robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0)
-    robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0)
+    eye = Eyeball()
 
-    robot.goto_zero()
+    eye.goto_zero()
 
+    eye.command_joint_pos(np.array([10.0, 20.0]))
+
+    # print(eye.joint_pos_spec())
+    # print(eye.joint_state_spec())
+    # print(eye.get_robot_info())
+    # print(eye.get_observations())
+    # print(eye.get_joint_pos())
+    # print(eye.get_joint_vel())
+    # print(eye.get_joint_state())
 
     ang = np.linspace(-30.0, 30.0, 8)
 
     counter = 0
     up = True
-    import time
+    # import time
     while True:
-        print("\n")
-        print(f"Commanded angle: {ang[counter]}")
         t0 = time.time()
-        res = robot.goto_abs_multi_loop_angles_speeds([ang[counter], ang[counter]])
-        print(res)
-        # for motor in robot.motors:
-        #     res = motor.move_abs_multi(ang[counter])
-        #     print(res)
-            # print(res["encoder"] * 0.02)
-            # motor.move_abs_multi(ang[counter])
+        eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
         t1 = time.time()
-        # print(f"time: {t1 - t0}")
         print(f"hz: {1 / (t1 - t0)}")
-
 
         if counter == len(ang) - 1 and up:
             up = False
@@ -969,20 +1100,3 @@ if __name__ == '__main__':
             counter += 1
         else:
             counter -= 1
-            
-        # time.sleep(0.3)
-        # print("\n")
-        # for motor in robot.motors:
-        #     print("Encoder: ", motor.read_encoder())
-        #     print("Multi loop angle: ", motor.get_multi_loop_angle())
-        #     print("Single loop angle: ", motor.get_single_loop_angle())
-        # print("\n")
-        # time.sleep(0.3)
-
-
-
-    # for i, motor in enumerate(robot.motors):
-    #     print(motor.read_encoder())
-    #     if i == 1:
-    #         motor.set_zero_cur_position()
-    #         print(f"Motor {i} zero angle: {motor.zero_angle}")

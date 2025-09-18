@@ -577,6 +577,7 @@ class Motor():
                 temp        = struct.unpack("<b", d[0:1])[0]
                 iq_or_power = struct.unpack("<h", d[1:3])[0]
                 speed_dps   = struct.unpack("<h", d[3:5])[0]
+                speed_radps = speed_dps * np.pi / 180.0
                 encoder     = struct.unpack("<H", d[5:7])[0]
                 angle_deg   = encoder / float(self.CPR) * 360.0
                 if angle_deg > 180.0 and self.angle_range == "180":
@@ -587,6 +588,7 @@ class Motor():
                     "temperature_C": temp,
                     "iq_or_power": iq_or_power,
                     "speed_dps": speed_dps,
+                    "speed_radps": speed_radps,
                     "encoder": encoder,
                     "angle_deg": angle_deg,
                     "angle_rad": angle_rad,

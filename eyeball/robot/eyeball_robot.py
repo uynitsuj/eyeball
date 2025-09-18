@@ -76,7 +76,7 @@ class Eyeball(Robot):
         ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos))
         for i, ret_val in enumerate(ret):
             self._last_joint_pos[i] = ret_val["angle_rad"]
-            self._last_joint_vel[i] = ret_val["speed_dps"]
+            self._last_joint_vel[i] = ret_val["speed_radps"]
 
     # def command_target_vel(self, joint_vel: np.ndarray) -> None:
     #     """Command the leader robot to a given state.
@@ -97,7 +97,7 @@ class Eyeball(Robot):
         ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos), list(joint_vel))
         for i, ret_val in enumerate(ret):
             self._last_joint_pos[i] = ret_val["angle_rad"]
-            self._last_joint_vel[i] = ret_val["speed_dps"]
+            self._last_joint_vel[i] = ret_val["speed_radps"]
 
     def get_observations(self) -> Dict[str, np.ndarray]:
         """Get the current observations of the robot.
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     # print(eye.get_joint_vel())
     # print(eye.get_joint_state())
 
-    ang = np.linspace(-40.0, 40.0, 16)
+    ang = np.linspace(-40.0, 40.0, 4)
 
     counter = 0
     up = True

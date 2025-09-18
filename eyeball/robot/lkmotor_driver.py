@@ -11,6 +11,7 @@ from eyeball.robot.robot import Robot, ActionSpec
 from dm_env.specs import Array
 from typing import Dict, Any
 from abc import abstractmethod
+from typing import Literal
 
 CMD_HEADER                     = 0x3E
 CMD_ASK_MULTI_LOOP_ANGLE       = 0x92        #Read multi -loop Angle command
@@ -62,7 +63,7 @@ class Motor():
     
     tolerance: float               = 0.1 #deg. Used for different operatins like wait_stop Must be > 0.01!
 
-    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, encoder_bits: int = 15): # default to 15-bit encoder, can be overridden
+    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360"): # default to 15-bit encoder, can be overridden
         assert id           >= 0
         assert tolerance    >= 0.01
         #assert serial_port  != None    #no check for case of simulation
@@ -74,7 +75,7 @@ class Motor():
         self.tolerance      = tolerance
         self.name           = name
         self.zero_angle     = zero_angle
-
+        self.angle_range    = angle_range # for returns in "[0, 360]" or "[-180, 180]"
 
         self.CPR = 2**encoder_bits # counts per revolution
     
@@ -149,40 +150,6 @@ class Motor():
             rest = self.__read_response(data_len + 1)  # payload + data_crc
             return hdr + rest
         return hdr  # no payload, no data_crc
-
-    # def _recv_exact(self, n: int, deadline_s: float = 0.050) -> bytes:
-    #     """Read exactly n bytes before deadline; returns bytes (possibly shorter on timeout)."""
-    #     buf = bytearray()
-    #     end = time.perf_counter() + deadline_s
-    #     read = self.serial_port.read
-    #     in_waiting = self.serial_port.in_waiting
-    #     while len(buf) < n:
-    #         # Try to read whatever is available
-    #         need = n - len(buf)
-    #         if in_waiting:
-    #             chunk = read(need)
-    #             if chunk:
-    #                 buf.extend(chunk)
-    #                 continue
-    #         # No bytes ready: short sleep to yield USB poll (1 ms frames)
-    #         if time.perf_counter() > end:
-    #             break
-    #         time.sleep(0.001)
-    #     return bytes(buf)
-
-    # def _recv_frame(self) -> bytes:
-    #     # Read fixed 5-byte header in one go (aggregate)
-    #     hdr = self._recv_exact(5)
-    #     if len(hdr) < 5:
-    #         return hdr  # will be length-checked upstream
-    #     data_len = hdr[3]
-    #     if data_len == 0:
-    #         return hdr
-    #     # Read payload + CRC in one go
-    #     rest = self._recv_exact(data_len + 1)
-    #     return hdr + rest
-
-
 
     # ---------------- Power / Stop ----------------
 
@@ -357,73 +324,6 @@ class Motor():
         state = res[5]
         return bool(state)
 
-    # ---------------- Control Modes ----------------
-
-    def abs_multi_loop_angle_cmd1(self, angle_deg: float):
-        """
-        Absolute multi-turn position command (Command 1 flavor).
-
-        Args:
-            angle_deg: absolute multi-turn angle in degrees (0.01°/LSB on wire).
-
-        Returns:
-            dict from `read_state2()`.
-        """
-        val = int(round(angle_deg * 100))
-        payload = struct.pack("<q", val)  # int64
-        res = self._send(0xA3, payload, 13)
-        d = res[5:12]
-        temp = struct.unpack("<b", d[0:1])[0]
-        iq_or_power = struct.unpack("<h", d[1:3])[0]
-        speed_dps = struct.unpack("<h", d[3:5])[0]
-        encoder = struct.unpack("<H", d[5:7])[0]
-        angle = encoder / self.CPR * 360
-
-        # IMPLEMENTATION DETAIL:
-        # angle returned here appears to correspond to the angle read _before_ sending the goto command
-
-        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder, "angle": angle}
-
-    def abs_single_loop_angle_cmd1(self, angle_deg: float, cw: bool):
-        """
-        Absolute single-turn position (0..360°) with explicit direction.
-
-        Args:
-            angle_deg: angle in [0, 360) degrees (wrapped and quantized to 0.01°).
-            cw: True for clockwise, False for counter-clockwise.
-
-        Notes:
-            Wire format uses u16 ticks (0..35999) and a spinDirection byte.
-
-        Returns:
-            dict from `read_state2()`.
-        """
-        angle_ticks = int(round(angle_deg * 100)) % 36000
-        spin = 0x00 if cw else 0x01
-        payload = struct.pack("<BHB", spin, angle_ticks, 0x00)
-        res = self._send(0xA5, payload, 10)
-        d = res[5:12]
-        temp = struct.unpack("<b", d[0:1])[0]
-        iq_or_power = struct.unpack("<h", d[1:3])[0]
-        speed_dps = struct.unpack("<h", d[3:5])[0]
-        encoder = struct.unpack("<H", d[5:7])[0]
-        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
-
-    def inc_angle_cmd1(self, delta_deg: float):
-        """
-        Incremental (relative) position step.
-
-        Args:
-            delta_deg: signed relative angle in degrees (0.01°/LSB on wire).
-
-        Returns:
-            dict from `read_state2()`.
-        """
-        val = int(round(delta_deg * 100))
-        payload = struct.pack("<i", val)
-        self._send(0xA7, payload, 10)
-        return self.read_state2()
-
     # ---------------- Encoder / Angles / Zeros ----------------
 
     def read_encoder(self):
@@ -469,7 +369,6 @@ class Motor():
         """
         return self._send(0x95, b"", 5)
 
-    # (Your existing ROM zero method)
     def set_zero_cur_position(self):
         """
         Persist the current position as zero (writes ROM).
@@ -503,10 +402,7 @@ class Motor():
                 - 'raw': raw 6-byte payload (bytes)
                 - 'decoded': structured interpretation (dict), if known
         """
-        # import pdb; pdb.set_trace()
-        # int to hex
-        # param_id = hex(param_id)
-        # print(param_id)
+
         payload = struct.pack("<BB", param_id, 0x00)
         res = self._send(0x40, payload)
 
@@ -622,191 +518,7 @@ class Motor():
 
         # ---------- Generic frame parsing / verification ----------
 
-    def _parse_reply(self, res: bytes) -> dict:
-        """
-        Parse a device reply frame and validate checksums.
-
-        Reply layout:
-        [0]=0x3E, [1]=CMD, [2]=ID, [3]=DATA_LEN, [4]=HEADER_CRC,
-        [5:5+DATA_LEN]=DATA, [5+DATA_LEN]=DATA_CRC (present iff DATA_LEN>0)
-
-        Returns:
-            dict with keys:
-            cmd (int), id (int), data_len (int), data (bytes),
-            header_crc_ok (bool), data_crc_ok (bool)
-        """
-        if len(res) < 5:
-            return {"cmd": None, "id": None, "data_len": 0, "data": b"", "header_crc_ok": False, "data_crc_ok": False}
-
-        cmd = res[1]
-        dev_id = res[2]
-        data_len = res[3]
-        hdr_crc = res[4]
-        header_crc_ok = ((CMD_HEADER + cmd + dev_id + data_len) & 0xFF) == hdr_crc
-
-        if data_len == 0:
-            return {
-                "cmd": cmd, "id": dev_id, "data_len": 0, "data": b"",
-                "header_crc_ok": header_crc_ok, "data_crc_ok": True
-            }
-
-        if len(res) != 5 + data_len + 1:
-            # length mismatch -> cannot check data CRC
-            return {
-                "cmd": cmd, "id": dev_id, "data_len": data_len, "data": res[5:5+data_len],
-                "header_crc_ok": header_crc_ok, "data_crc_ok": False
-            }
-
-        data = res[5:5+data_len]
-        data_crc = res[5+data_len]
-        data_crc_ok = ((sum(data) & 0xFF) == data_crc)
-        return {
-            "cmd": cmd, "id": dev_id, "data_len": data_len, "data": data,
-            "header_crc_ok": header_crc_ok, "data_crc_ok": data_crc_ok
-        }
-
-
-
-    def move_abs_multi(self, angle_deg: float, speed_dps: float | None = None):
-        """
-        Absolute multi-turn move. If speed_dps is given -> cmd2 (0xA4); else cmd1 (0xA3).
-        Closed-loop on the driver.
-        """
-        if speed_dps is None:
-            return self.abs_multi_loop_angle_cmd1(angle_deg)      # 0xA3 (angle only)
-        else:
-            return self.abs_multi_loop_angle_speed(angle_deg, speed_dps)
-
-    def move_abs_single(self, angle_deg: float, cw: bool | None = None, speed_dps: float | None = None):
-        """
-        Absolute single-turn move (0..360).
-        - If speed_dps is None -> cmd1 (0xA5). Requires cw direction (True/False).
-        - If speed_dps is given -> cmd2 (0xA6). Direction is chosen internally.
-        Closed-loop on the driver.
-        """
-        if speed_dps is None:
-            if cw is None:
-                raise ValueError("cmd1 (0xA5) requires cw=True/False")
-            return self.abs_single_loop_angle_cmd1(angle_deg, cw)  # 0xA5
-        else:
-            return self.abs_single_loop_angle_speed(angle_deg, speed_dps, True)  # 0xA6; cw arg is ignored by device
-
-    def move_inc(self, delta_deg: float, speed_dps: float | None = None):
-        """
-        Incremental move by delta_deg.
-        - If speed_dps is None -> cmd1 (0xA7)
-        - If speed_dps is given -> cmd2 (0xA8)
-        Closed-loop on the driver.
-        """
-        if speed_dps is None:
-            return self.inc_angle_cmd1(delta_deg)                  # 0xA7
-        else:
-            return self.inc_angle_speed(delta_deg, speed_dps)      # 0xA8
-
-
-    # Single position closed loop control command 1 Single position closed loop control command 1 
-    # Angle 0...359.99 deg 
-    # Rotation direction is set by outside
-    def abs_single_loop_angle_speed(self, angle: float, speed: float, CW: bool):
-
-        if angle == 360.0: angle = 0
-
-        assert speed > 0, "Speed must be grater than zero"
-        assert angle >= 0.0, f"Angle must be grather or equal zero {angle}"
-        assert angle < 360, f"Angle must be less 360 deg Angle is {angle}"
-        
-
-        if not self.serial_port == None:
-            data_length = 0x08
-            
-            header_crc  = (CMD_HEADER + CMD_ABS_SINGLE_ANGLE_SPEED + self.id + data_length) % 256
-
-            angle       = int(angle * 100)
-            speed       = int(speed * 100)    #according documentaton
-            
-            if  CW: 
-                r_dir = 0x00 
-            else: 
-                r_dir = 0x01
-
-            data        = pack('<BHBi', r_dir, angle, 0x00, speed)
-            data_crc    = sum(data) % 256
-
-            snd = bytearray(pack('<BBBBBBHBiB', CMD_HEADER, CMD_ABS_SINGLE_ANGLE_SPEED, self.id, data_length, header_crc, r_dir, angle, 0x00, speed, data_crc))
-            
-            
-            self.serial_port.write(snd)
-
-            res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port then simulate
-            res = 1
-            self.__cur_single_loop_angle = angle
-
-        return res
-    # motor rotation direction is determined by the difference between the target position and the current position
-    def abs_multi_loop_angle_speed(self, angle: float, speed: float):
-        assert speed > 0, "Speed must be grater than zero"
-        
-        #if not self.CW:  angle = -1 * angle
-        
-        data_length = 0x0C
-        
-        header_crc  = (CMD_HEADER + CMD_ABS_MULTI_LOOP_ANGLE_SPEED + self.id + data_length) % 256
-
-        angle       = int(angle * 100)
-        speed       = int(speed * 100)    #according documentaton
-
-        data        = pack('<qi', angle, speed)
-        data_crc    = sum(data) % 256
-
-        snd = bytearray(pack('<BBBBBqiB', CMD_HEADER, CMD_ABS_MULTI_LOOP_ANGLE_SPEED, self.id, data_length, header_crc, angle, speed, data_crc))
-        
-        self.serial_port.write(snd)
-
-        # import time
-        # t0 = time.time()
-        res = self.__read_response(13)      #wait 13 bytes
-        # t1 = time.time()
-        # print(f"time to read response: {t1 - t0}")
-        # print(f"read response hz: {1 / (t1 - t0)}")
-
-        d = res[5:12]
-        temp = struct.unpack("<b", d[0:1])[0]
-        iq_or_power = struct.unpack("<h", d[1:3])[0]
-        speed_dps = struct.unpack("<h", d[3:5])[0]
-        encoder = struct.unpack("<H", d[5:7])[0]
-        angle = encoder / self.CPR * 360
-        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder, "angle": angle}
-
-
-    def inc_angle_speed(self, angle: float, speed: float):
-        assert speed > 0, "Speed must be grater than zero"
-
-        if not self.serial_port == None:
-            data_length = 0x08
-
-            #if not self.CW:  angle = -1 * angle
-            
-            header_crc  = (CMD_HEADER + CMD_INC_ANGLE_SPEED + self.id + data_length) % 256
-
-            angle       = int(angle * 100)
-            speed       = int(speed * 100)    #according documentaton
-
-            data        = pack('<ii', angle, speed)
-            data_crc    = sum(data) % 256
-
-            snd = bytearray(pack('<BBBBBiiB', CMD_HEADER, CMD_INC_ANGLE_SPEED, self.id, data_length, header_crc, angle, speed, data_crc))
-            
-            print(" ".join(map(lambda b: format(b, "02x"), snd)))
-            self.serial_port.write(snd)
-
-            res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port then simulate
-            res = 1
-            self.__cur_multi_loop_angle = self.__cur_multi_loop_angle + angle
-        return res
-
-    # 0 ... 365.99 deg
+    # # 0 ... 365.99 deg
     def get_single_loop_angle(self):
         if self.serial_port is None:
             return None
@@ -828,7 +540,7 @@ class Motor():
 
         return self.__cur_single_loop_angle
 
-    # 0 ... INF deg
+    # # 0 ... INF deg
     def get_multi_loop_angle(self):
         if self.serial_port == None:
             pass
@@ -848,6 +560,133 @@ class Motor():
        
 
         return self.__cur_multi_loop_angle
+
+        # ---------- Unified helpers ----------
+
+    def _parse_state2_reply(self, res: bytes) -> dict:
+        """
+        Parse the standard 13-byte telemetry block (as used by 0x9C and most motion acks).
+        Returns a dict with consistent keys.
+        """
+        # Defensive: some cmds (e.g., 0xA5) may return only 10 bytes (5 hdr + 4 data + 1 crc).
+        # When 13 bytes are present, DATA is 7 bytes at res[5:12].
+        # We'll be tolerant: try to parse the 7-byte layout if available; otherwise fall back to a state read.
+        if len(res) >= 12:
+            d = res[5:12]
+            if len(d) == 7:
+                temp        = struct.unpack("<b", d[0:1])[0]
+                iq_or_power = struct.unpack("<h", d[1:3])[0]
+                speed_dps   = struct.unpack("<h", d[3:5])[0]
+                encoder     = struct.unpack("<H", d[5:7])[0]
+                angle_deg   = encoder / float(self.CPR) * 360.0
+                if angle_deg > 180.0 and self.angle_range == "180":
+                    angle_deg = angle_deg - 360.0
+                
+                angle_rad   = angle_deg * np.pi / 180.0
+                return {
+                    "temperature_C": temp,
+                    "iq_or_power": iq_or_power,
+                    "speed_dps": speed_dps,
+                    "encoder": encoder,
+                    "angle_deg": angle_deg,
+                    "angle_rad": angle_rad,
+                }
+
+        # Fallback: ask device for state2 explicitly (13B), to keep a unified return.
+        return self.read_state2()  # already returns same key names
+
+    def _send_status(self, cmd: int, payload: bytes, expect_len: int | None = 13) -> dict:
+        """
+        Send a command and parse the resulting telemetry into a consistent dict.
+        If the reply length is not the nominal 13B, we still try to parse;
+        otherwise we fetch state2() as a fallback.
+        """
+        res = self._send(cmd, payload, expect_len=expect_len)
+        return self._parse_state2_reply(res)
+
+    # ---------- Unified motion commands ----------
+
+    def abs_multi_loop_angle_cmd1(self, angle_deg: float) -> dict:
+        """
+        A3: Absolute multi-turn position (no speed). Always returns parsed telemetry dict.
+        """
+        wire_angle = int(round(angle_deg * 100))  # q0.01 deg, int64
+        payload = struct.pack("<q", wire_angle)
+        return self._send_status(0xA3, payload, expect_len=13)
+
+    def abs_multi_loop_angle_speed(self, angle_deg: float, speed_dps: float) -> dict:
+        """
+        A4: Absolute multi-turn position with speed. Returns parsed telemetry dict.
+        """
+        assert speed_dps > 0, "Speed must be greater than zero"
+        wire_angle = int(round(angle_deg * 100))  # q0.01 deg
+        wire_speed = int(round(speed_dps * 100))  # q0.01 dps
+        payload = struct.pack("<qi", wire_angle, wire_speed)
+        return self._send_status(0xA4, payload, expect_len=13)
+
+    def abs_single_loop_angle_cmd1(self, angle_deg: float, cw: bool) -> dict:
+        """
+        A5: Absolute single-turn (0..360) with explicit direction. Returns parsed telemetry dict.
+        Note: device returns a shorter frame on some models; we normalize output via _parse_state2_reply().
+        """
+        angle_ticks = int(round(angle_deg * 100)) % 36000  # 0..35999
+        spin = 0x00 if cw else 0x01
+        payload = struct.pack("<BHB", spin, angle_ticks, 0x00)
+        # Many firmwares reply with 10B here; parser handles it or falls back to state2.
+        return self._send_status(0xA5, payload, expect_len=10)
+
+    def abs_single_loop_angle_speed(self, angle_deg: float, speed_dps: float, cw: bool | None = None) -> dict:
+        """
+        A6: Absolute single-turn with speed. Direction is chosen internally by device; 'cw' is ignored by most models.
+        Returns parsed telemetry dict.
+        """
+        assert speed_dps > 0, "Speed must be greater than zero"
+        if angle_deg == 360.0:
+            angle_deg = 0.0
+        assert 0.0 <= angle_deg < 360.0, f"Angle must be in [0, 360): {angle_deg}"
+        angle_ticks = int(round(angle_deg * 100)) % 36000
+        wire_speed  = int(round(speed_dps * 100))
+        # Some datasheets show a 'spin' byte for A6 but device ignores it; keep a placeholder 0x00.
+        payload = struct.pack("<BHBi", 0x00, angle_ticks, 0x00, wire_speed)
+        return self._send_status(0xA6, payload, expect_len=13)
+
+    def inc_angle_cmd1(self, delta_deg: float) -> dict:
+        """
+        A7: Incremental move (no speed). To keep return shape unified, we read state2 after ack if needed.
+        """
+        wire_delta = int(round(delta_deg * 100))
+        payload = struct.pack("<i", wire_delta)
+        # Some firmwares ack with 10B; normalize via parser (which will fall back to read_state2()).
+        return self._send_status(0xA7, payload, expect_len=10)
+
+    def inc_angle_speed(self, delta_deg: float, speed_dps: float) -> dict:
+        """
+        A8: Incremental move with speed. Returns parsed telemetry dict.
+        """
+        assert speed_dps > 0, "Speed must be greater than zero"
+        wire_delta = int(round(delta_deg * 100))
+        wire_speed = int(round(speed_dps * 100))
+        payload = struct.pack("<ii", wire_delta, wire_speed)
+        return self._send_status(0xA8, payload, expect_len=13)
+
+    # ---------- High-level shims (kept for compatibility) ----------
+
+    def move_abs_multi(self, angle_deg: float, speed_dps: float | None = None) -> dict:
+        return self.abs_multi_loop_angle_cmd1(angle_deg) if speed_dps is None \
+            else self.abs_multi_loop_angle_speed(angle_deg, speed_dps)
+
+    def move_abs_single(self, angle_deg: float, cw: bool | None = None, speed_dps: float | None = None) -> dict:
+        if speed_dps is None:
+            if cw is None:
+                raise ValueError("cmd1 (0xA5) requires cw=True/False")
+            return self.abs_single_loop_angle_cmd1(angle_deg, cw)
+        else:
+            return self.abs_single_loop_angle_speed(angle_deg, speed_dps, cw)
+
+    def move_inc(self, delta_deg: float, speed_dps: float | None = None) -> dict:
+        return self.inc_angle_cmd1(delta_deg) if speed_dps is None \
+            else self.inc_angle_speed(delta_deg, speed_dps)
+
 
     #blocks code execution till motor stop (angle do not change because of ANY reason)
     #tolerance to detect angle similarity,  request_period to reduce ammout of requests
@@ -872,7 +711,6 @@ class Motor():
 class LKMotorChain(Serializer):
     motors = list()
     __port: serial.Serial = None    #if sumulation, serial port is not assigned
-    coords = "NO"
 
     def __init__(self, port_name: str) -> None:
         try:
@@ -896,9 +734,9 @@ class LKMotorChain(Serializer):
 
     def add_motor(self, 
                     id: hex, tolerance: float, 
-                    name: str, CW: bool, zero_angle: float) -> Motor :
+                    name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360") -> Motor :
 
-        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle)
+        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle, encoder_bits, angle_range)
         self.motors.append(new_motor)
         return new_motor
 
@@ -911,21 +749,6 @@ class LKMotorChain(Serializer):
             motor.abs_multi_loop_angle_speed(motor.zero_angle, speed)
         self.wait_stop()
 
-    # Will rotate each motor to reach angle with multiturn (multiloop). No direction selection. I.e 1 deg -> 355deg will run whole loop
-    # def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list = None):
-
-    #     assert len(angles) == len(speeds) == len(self.motors), "Ammout of motors, speeds and angles must be same"
-
-    #     for motor, angle, speed in zip(self.motors, angles, speeds):
-    #         try:
-    #             angle = float(angle)
-    #             speed = float(speed)
-    #         except ValueError as e:
-    #             print("Error in robot.goto_abs_multi_loop_angles_speeds", str(e))
-    #             exit()
-    #         motor.abs_multi_loop_angle_speed(angle, speed)
-    #     self.wait_stop()
-    
     def goto_abs_multi_loop_angles_speeds(self, angles: list, speeds: list = None):
         results = list()
         idxs = range(len(self.motors))
@@ -936,8 +759,6 @@ class LKMotorChain(Serializer):
                 speed = speeds[idx]
             res = motor.move_abs_multi(angle, speed_dps=speed)
             results.append(res)
-            # time.sleep(1/300)
-        # self.wait_stop()
         return results
 
     def goto_abs_single_loop_angles_speeds(self, angles: list, speeds: list, dirs: list):

@@ -19,8 +19,8 @@ class Eyeball(Robot):
 
         print(f"Initializing Eyeball robot on port {port_name}")
         self.robot = LKMotorChain(port_name)
-        self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0)
-        self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0)
+        self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180")
+        self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180")
 
         self.total_dof = len(self.robot.motors)
 
@@ -75,7 +75,7 @@ class Eyeball(Robot):
         """
         ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos))
         for i, ret_val in enumerate(ret):
-            self._last_joint_pos[i] = ret_val["angle"]
+            self._last_joint_pos[i] = ret_val["angle_rad"]
             self._last_joint_vel[i] = ret_val["speed_dps"]
 
     # def command_target_vel(self, joint_vel: np.ndarray) -> None:
@@ -96,7 +96,7 @@ class Eyeball(Robot):
         joint_vel = joint_state["joint_vel"]
         ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos), list(joint_vel))
         for i, ret_val in enumerate(ret):
-            self._last_joint_pos[i] = ret_val["angle"]
+            self._last_joint_pos[i] = ret_val["angle_rad"]
             self._last_joint_vel[i] = ret_val["speed_dps"]
 
     def get_observations(self) -> Dict[str, np.ndarray]:
@@ -160,16 +160,16 @@ if __name__ == '__main__':
     # print(eye.get_joint_vel())
     # print(eye.get_joint_state())
 
-    ang = np.linspace(-40.0, 40.0, 8)
+    ang = np.linspace(-40.0, 40.0, 16)
 
     counter = 0
     up = True
     # import time
-    spd = 800.0
+    spd = 1000.0
     while True:
         t0 = time.time()
-        # eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
-        eye.command_joint_state({"joint_pos": np.array([ang[counter], ang[counter]]), "joint_vel": np.array([spd, spd])})
+        eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
+        # eye.command_joint_state({"joint_pos": np.array([ang[counter], ang[counter]]), "joint_vel": np.array([spd, spd])})
         print(eye.get_joint_state())
         t1 = time.time()
         print(f"hz: {1 / (t1 - t0)}")
@@ -184,4 +184,4 @@ if __name__ == '__main__':
         else:
             counter -= 1
 
-        time.sleep(1/100)
+        # time.sleep(1/100)

@@ -160,14 +160,17 @@ if __name__ == '__main__':
     # print(eye.get_joint_vel())
     # print(eye.get_joint_state())
 
-    ang = np.linspace(-30.0, 30.0, 8)
+    ang = np.linspace(-40.0, 40.0, 8)
 
     counter = 0
     up = True
     # import time
+    spd = 800.0
     while True:
         t0 = time.time()
-        eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
+        # eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
+        eye.command_joint_state({"joint_pos": np.array([ang[counter], ang[counter]]), "joint_vel": np.array([spd, spd])})
+        print(eye.get_joint_state())
         t1 = time.time()
         print(f"hz: {1 / (t1 - t0)}")
 
@@ -180,3 +183,5 @@ if __name__ == '__main__':
             counter += 1
         else:
             counter -= 1
+
+        time.sleep(1/100)

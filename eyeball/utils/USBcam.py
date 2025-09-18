@@ -29,7 +29,7 @@ class USBCamera(object):
         
     @property
     def device_name(self):
-        """int : The number of the PhoXi camera to connect to.
+        """int : The number of the camera to connect to.
         """
         return self._device
 

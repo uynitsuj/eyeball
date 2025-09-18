@@ -150,6 +150,39 @@ class Motor():
             return hdr + rest
         return hdr  # no payload, no data_crc
 
+    # def _recv_exact(self, n: int, deadline_s: float = 0.050) -> bytes:
+    #     """Read exactly n bytes before deadline; returns bytes (possibly shorter on timeout)."""
+    #     buf = bytearray()
+    #     end = time.perf_counter() + deadline_s
+    #     read = self.serial_port.read
+    #     in_waiting = self.serial_port.in_waiting
+    #     while len(buf) < n:
+    #         # Try to read whatever is available
+    #         need = n - len(buf)
+    #         if in_waiting:
+    #             chunk = read(need)
+    #             if chunk:
+    #                 buf.extend(chunk)
+    #                 continue
+    #         # No bytes ready: short sleep to yield USB poll (1 ms frames)
+    #         if time.perf_counter() > end:
+    #             break
+    #         time.sleep(0.001)
+    #     return bytes(buf)
+
+    # def _recv_frame(self) -> bytes:
+    #     # Read fixed 5-byte header in one go (aggregate)
+    #     hdr = self._recv_exact(5)
+    #     if len(hdr) < 5:
+    #         return hdr  # will be length-checked upstream
+    #     data_len = hdr[3]
+    #     if data_len == 0:
+    #         return hdr
+    #     # Read payload + CRC in one go
+    #     rest = self._recv_exact(data_len + 1)
+    #     return hdr + rest
+
+
 
     # ---------------- Power / Stop ----------------
 
@@ -642,7 +675,6 @@ class Motor():
         if speed_dps is None:
             return self.abs_multi_loop_angle_cmd1(angle_deg)      # 0xA3 (angle only)
         else:
-            # 0xA4 (angle+speed) — you already have this as abs_multi_loop_angle_speed()
             return self.abs_multi_loop_angle_speed(angle_deg, speed_dps)
 
     def move_abs_single(self, angle_deg: float, cw: bool | None = None, speed_dps: float | None = None):
@@ -715,34 +747,36 @@ class Motor():
     def abs_multi_loop_angle_speed(self, angle: float, speed: float):
         assert speed > 0, "Speed must be grater than zero"
         
-        if not self.serial_port == None:
-            #if not self.CW:  angle = -1 * angle
-            
-            data_length = 0x0C
-            
-            header_crc  = (CMD_HEADER + CMD_ABS_MULTI_LOOP_ANGLE_SPEED + self.id + data_length) % 256
+        #if not self.CW:  angle = -1 * angle
+        
+        data_length = 0x0C
+        
+        header_crc  = (CMD_HEADER + CMD_ABS_MULTI_LOOP_ANGLE_SPEED + self.id + data_length) % 256
 
-            angle       = int(angle * 100)
-            speed       = int(speed * 100)    #according documentaton
+        angle       = int(angle * 100)
+        speed       = int(speed * 100)    #according documentaton
 
-            data        = pack('<qi', angle, speed)
-            data_crc    = sum(data) % 256
+        data        = pack('<qi', angle, speed)
+        data_crc    = sum(data) % 256
 
-            snd = bytearray(pack('<BBBBBqiB', CMD_HEADER, CMD_ABS_MULTI_LOOP_ANGLE_SPEED, self.id, data_length, header_crc, angle, speed, data_crc))
-            
-            self.serial_port.write(snd)
+        snd = bytearray(pack('<BBBBBqiB', CMD_HEADER, CMD_ABS_MULTI_LOOP_ANGLE_SPEED, self.id, data_length, header_crc, angle, speed, data_crc))
+        
+        self.serial_port.write(snd)
 
-            res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port then simulate
-            res = 1
-            self.__cur_multi_loop_angle = angle
-            
+        # import time
+        # t0 = time.time()
+        res = self.__read_response(13)      #wait 13 bytes
+        # t1 = time.time()
+        # print(f"time to read response: {t1 - t0}")
+        # print(f"read response hz: {1 / (t1 - t0)}")
+
         d = res[5:12]
         temp = struct.unpack("<b", d[0:1])[0]
         iq_or_power = struct.unpack("<h", d[1:3])[0]
         speed_dps = struct.unpack("<h", d[3:5])[0]
         encoder = struct.unpack("<H", d[5:7])[0]
-        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
+        angle = encoder / self.CPR * 360
+        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder, "angle": angle}
 
 
     def inc_angle_speed(self, angle: float, speed: float):
@@ -848,7 +882,13 @@ class LKMotorChain(Serializer):
                 parity      =   serial.PARITY_NONE,
                 stopbits    =   serial.STOPBITS_ONE,
                 bytesize    =   serial.EIGHTBITS,
-                #timeout=1
+
+                timeout=0,                  # non-blocking
+                write_timeout=0,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
+                inter_byte_timeout=None,    # avoid per-byte delays
             )
 
         except Exception as e:
@@ -896,6 +936,7 @@ class LKMotorChain(Serializer):
                 speed = speeds[idx]
             res = motor.move_abs_multi(angle, speed_dps=speed)
             results.append(res)
+            # time.sleep(1/300)
         # self.wait_stop()
         return results
 
@@ -966,5 +1007,4 @@ if __name__ == '__main__':
         if up:
             counter += 1
         else:
-            counter -= 1
-            
+            counter -= 1            

@@ -59,21 +59,12 @@ class Motor():
     
     tolerance: float               = 0.1 #deg. Used for different operatins like wait_stop Must be > 0.01!
 
-    # Simulation rotation
-    sim_CW: bool                   = True
-    
-    # Tooltip shift. Motor's zero point is bottom axis of motor.
-    sim_shifts                     = [0.0, 0.0, 0.0]
-    sim_rot_plane: str             = "YZ"
-
-    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, sim_shifts: list, sim_rot_plane: str):
+    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, encoder_bits: int = 15): # default to 15-bit encoder, can be overridden
         assert id           >= 0
         assert tolerance    >= 0.01
         #assert serial_port  != None    #no check for case of simulation
         assert name         != None
         
-        #Yep, I know about enums!
-        assert sim_rot_plane.upper() in ["XY", "XZ", "YZ"], "Wrong rotation plane. It must be XY, XZ or YZ"        
 
         self.serial_port    = serial_port
         self.id             = id
@@ -81,9 +72,8 @@ class Motor():
         self.name           = name
         self.zero_angle     = zero_angle
 
-        self.sim_CW         = CW
-        self.sim_shifts     = sim_shifts
-        self.sim_rot_plane  = sim_rot_plane.upper()
+
+        self.CPR = 2**encoder_bits # counts per revolution
     
     def __read_response(self, bytes_expect: int):
         self.serial_port.timeout = 0.1
@@ -333,52 +323,6 @@ class Motor():
 
     # ---------------- Control Modes ----------------
 
-    # def open_loop_power(self, power_ctrl: int):
-    #     """
-    #     Open-loop power/iq drive.
-
-    #     Args:
-    #         power_ctrl: int16 in device-defined range (e.g., [-850, 850]).
-
-    #     Behavior:
-    #         Sends CMD 0xA0 with int16 payload, then reads state2 snapshot.
-
-    #     Returns:
-    #         dict from `read_state2()`.
-    #     """
-    #     payload = struct.pack("<h", int(power_ctrl))
-    #     self._send(0xA0, payload, 8)  # short ack
-    #     return self.read_state2()
-
-    # def torque_control(self, iq_ctrl: int):
-    #     """
-    #     Closed-loop torque (iq) control.
-
-    #     Args:
-    #         iq_ctrl: int16 iq command (device-defined scale).
-
-    #     Returns:
-    #         dict from `read_state2()`.
-    #     """
-    #     payload = struct.pack("<h", int(iq_ctrl))
-    #     self._send(0xA1, payload, 8)
-    #     return self.read_state2()
-
-    # def speed_control(self, speed_dps: float):
-    #     """
-    #     Closed-loop speed control in deg/s.
-
-    #     Args:
-    #         speed_dps: target speed in deg/s (converted to 0.01 dps/LSB for the wire).
-
-    #     Returns:
-    #         dict from `read_state2()`.
-    #     """
-    #     val = int(round(speed_dps * 100))
-    #     payload = struct.pack("<i", val)
-    #     self._send(0xA2, payload, 10)
-    #     return self.read_state2()
-
     def abs_multi_loop_angle_cmd1(self, angle_deg: float):
         """
         Absolute multi-turn position command (Command 1 flavor).
@@ -397,8 +341,12 @@ class Motor():
         iq_or_power = struct.unpack("<h", d[1:3])[0]
         speed_dps = struct.unpack("<h", d[3:5])[0]
         encoder = struct.unpack("<H", d[5:7])[0]
+        angle = encoder / self.CPR * 360
 
-        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder}
+        # IMPLEMENTATION DETAIL:
+        # angle returned here appears to correspond to the angle read _before_ sending the goto command
+
+        return {"temperature_C": temp, "iq_or_power": iq_or_power, "speed_dps": speed_dps, "encoder": encoder, "angle": angle}
 
     def abs_single_loop_angle_cmd1(self, angle_deg: float, cw: bool):
         """
@@ -458,37 +406,6 @@ class Motor():
         encoder, raw, offset = struct.unpack("<HHH", d[0:6])
         return {"encoder": encoder, "raw": raw, "offset": offset}
 
-    def get_multi_loop_angle(self):
-        """
-        Read current absolute multi-turn angle (degrees).
-
-        Protocol:
-            CMD 0x92, no payload.
-            Reply: 14 bytes total; DATA=int64 ticks at 0.01°/LSB.
-
-        Returns:
-            float degrees (can be unbounded across multiple turns).
-        """
-        res = self._send(0x92, b"", 14)
-        angle_ticks = struct.unpack("<q", res[5:13])[0]
-        self.__cur_multi_loop_angle = angle_ticks / 100.0
-        return self.__cur_multi_loop_angle
-
-    def get_single_loop_angle(self):
-        """
-        Read current single-turn angle (degrees in [0, 360)).
-
-        Protocol:
-            CMD 0x94, no payload.
-            Reply: 10 bytes total; DATA=uint32 ticks at 0.01°/LSB.
-
-        Returns:
-            float degrees in [0, 360).
-        """
-        res = self._send(0x94, b"", 10)
-        circle = struct.unpack("<I", res[5:9])[0]
-        self.__cur_single_loop_angle = circle / 100.0
-        return self.__cur_single_loop_angle
 
     def clear_multi_loop(self):
         """
@@ -752,8 +669,6 @@ class Motor():
             return self.inc_angle_speed(delta_deg, speed_dps)      # 0xA8
 
 
-
-
     # Single position closed loop control command 1 Single position closed loop control command 1 
     # Angle 0...359.99 deg 
     # Rotation direction is set by outside
@@ -788,7 +703,7 @@ class Motor():
             self.serial_port.write(snd)
 
             res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port than simulate
+        else:  #if no serial port then simulate
             res = 1
             self.__cur_single_loop_angle = angle
 
@@ -815,7 +730,7 @@ class Motor():
             self.serial_port.write(snd)
 
             res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port than simulate
+        else:  #if no serial port then simulate
             res = 1
             self.__cur_multi_loop_angle = angle
             
@@ -849,34 +764,30 @@ class Motor():
             self.serial_port.write(snd)
 
             res = self.__read_response(13)      #wait 13 bytes
-        else:  #if no serial port than simulate
+        else:  #if no serial port then simulate
             res = 1
             self.__cur_multi_loop_angle = self.__cur_multi_loop_angle + angle
         return res
 
     # 0 ... 365.99 deg
     def get_single_loop_angle(self):
-        if self.serial_port == None:
-            pass
-        else:        
-            header_crc = (CMD_HEADER + CMD_ASK_SINGLE_LOOP_ANGLE + self.id + 0x00) % 256
-            r = bytearray(pack('BBBBB', CMD_HEADER, CMD_ASK_SINGLE_LOOP_ANGLE, self.id, 0x00, header_crc))
+        if self.serial_port is None:
+            return None
 
-            self.serial_port.write(r)
+        header_crc = (CMD_HEADER + CMD_ASK_SINGLE_LOOP_ANGLE + self.id + 0x00) % 256
+        req = pack('BBBBB', CMD_HEADER, CMD_ASK_SINGLE_LOOP_ANGLE, self.id, 0x00, header_crc)
+        self.serial_port.write(req)
 
-            #GET RESPONCE FROM MOTOR
-            #TODO add motor ID check
+        # Expect 10 bytes: 5-byte header + 4 data + 1 data checksum
+        res = self.__read_response(10)
 
-            time.sleep(.01)  #give the serial port sometime to receive the data
-            res = self.__read_response(8)
+        # (optional) sanity checks:
+        # assert res[0] == CMD_HEADER and res[1] == CMD_ASK_SINGLE_LOOP_ANGLE and res[2] == self.id and res[3] == 0x04
+        # assert (sum(res[0:4]) & 0xFF) == res[4]
+        # assert (sum(res[5:9]) & 0xFF) == res[9]
 
-            b = bytearray()
-            b.append(res[5])
-            b.append(res[6])
-            
-            angle = unpack("H", b)
-
-            self.__cur_single_loop_angle = float(angle[0]/100)
+        circle_raw, = unpack("<I", res[5:9])      # uint32 little-endian
+        self.__cur_single_loop_angle = circle_raw * 0.01  # degrees, 0..359.99
 
         return self.__cur_single_loop_angle
 
@@ -891,11 +802,9 @@ class Motor():
 
             self.serial_port.write(r)
 
-            #GET RESPONCE FROM MOTOR
-            #TODO add motor ID check
             res = self.__read_response(14)
             
-            angle = unpack("HHHH", res[5:13])
+            angle = unpack("<q", res[5:13])
             
             #update value beore return
             self.__cur_multi_loop_angle = float(angle[0]/100)
@@ -921,53 +830,9 @@ class Motor():
             prev_value = cur_multi_loop_angle
             time.sleep(request_period)
 
-        raise TimeoutError("Motor does not stopped in defined time")
+        raise TimeoutError("Motor did not stop in the defined time. Is motor clear of obstructions?")
 
-    '''
-    ------- SIMULATION FUNCTIONS -------  USE FOR simulation and angles <-> coordinates conversion
-    See https://www.bsuir.by/m/12_113415_1_70397.pdf
-    https://studref.com/472293/tehnika/matrichnye_metody_preobrazovaniya_koordinat_robototehnike?
-    '''
-    
-    def T(self, angle_deg: float) -> np.array:
-        angle_deg = math.radians(angle_deg)
-
-        if self.sim_CW:   k = 1
-        else:             k = -1
-        
-        #Generate translation and rotation matrix T        
-
-        
-        Ts = np.array([   [1, 0,  0,  self.sim_shifts[0]],          #shift matrix
-                          [0, 1,  0,  self.sim_shifts[1]],
-                          [0, 0,  1,  self.sim_shifts[2]],
-                          [0, 0,  0,  1]  ])
-        
-        sine = math.sin(k*angle_deg)
-        cosine = math.cos(k*angle_deg)
-               
-        if self.sim_rot_plane == "XY":
-            Ta = np.array([ [cosine , 0 , -sine , 0],       #Rotation affects X axis
-                            [-sine, 0 ,  cosine , 0],       #Rotation affects Y axis (ie XY plane)
-                            [0    , 0 , 1 , 0],                            
-                            [0    , 0 , 0 , 1]    ])  #Scale always 1
-        elif self.sim_rot_plane == "XZ":
-            Ta = np.array([ [cosine , 0 , -sine , 0],       #Rotation affects X axis
-                            [0      , 1 , 0     , 0],
-                            [-sine  , 0 , cosine , 0],       #Rotation affects Z axis (ie XZ plane)
-                            [0      , 0 , 0      , 1]    ])
-        elif self.sim_rot_plane == "YZ":
-            Ta = np.array([ [1, 0 , 0 , 0],       #X axis (no changes because of angle)
-                            [0, cosine , -sine  , 0],       #Rotation in YZ plane
-                            [0, sine ,  cosine , 0],
-                            [0, 0 , 0  , 1]    ])            
-        
-        else:
-            raise Exception('Wrong rotation plane. It must be XY, XZ or YZ')
-        
-        return np.matmul(Ta, Ts)         
-
-class Robot(Serializer):
+class LKMotorChain(Serializer):
     motors = list()
     __port: serial.Serial = None    #if sumulation, serial port is not assigned
     coords = "NO"
@@ -988,10 +853,9 @@ class Robot(Serializer):
 
     def add_motor(self, 
                     id: hex, tolerance: float, 
-                    name: str, CW: bool, zero_angle: float, sim_shifts: list, 
-                    sim_rot_plane: str) -> Motor :
+                    name: str, CW: bool, zero_angle: float) -> Motor :
 
-        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle, sim_shifts, sim_rot_plane)
+        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle)
         self.motors.append(new_motor)
         return new_motor
 
@@ -1156,37 +1020,60 @@ class Robot(Serializer):
 # MAIN
 if __name__ == '__main__':
      
-    robot = Robot("ttyUSB0")
-    robot.add_motor(0x01, 0.1, "motor1", True, 0.0, [0.0, 0.0, 0.0], "YZ")
-    robot.add_motor(0x02, 0.1, "motor2", True, 0.0, [0.0, 0.0, 0.0], "YZ")
+    robot = LKMotorChain("ttyUSB0")
+    robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0)
+    robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0)
 
     robot.goto_zero()
+    print("\n")
+    for motor in robot.motors:
+        print(motor.read_encoder())
+        print(motor.get_multi_loop_angle())
+        print(motor.get_single_loop_angle())
+    print("\n")
     
-    while True:
-        for motor in robot.motors:
-            # print(motor.read_state2())
-            print(motor.pid_read(150))
+    # while True:
+    #     for motor in robot.motors:
+    #         # print(motor.read_state2())
+    #         print(motor.pid_read(150))
 
-    ang = np.linspace(-30.0, 30.0, 2)
+    ang = np.linspace(-30.0, 30.0, 15)
     # ang = np.linspace(-0.5, 0.5, 2)
 
     counter = 0
+    up = True
     import time
     while True:
         print(f"angle: {ang[counter]}")
         t0 = time.time()
         for motor in robot.motors:
-            print(motor.move_abs_multi(ang[counter]))
+            res = motor.move_abs_multi(ang[counter])
+            print(res)
+            # print(res["encoder"] * 0.02)
             # motor.move_abs_multi(ang[counter])
         t1 = time.time()
         # print(f"time: {t1 - t0}")
         print(f"hz: {1 / (t1 - t0)}")
-        if counter == 1:
-            counter -= 1
-        else:
+
+
+        if counter == len(ang) - 1 and up:
+            up = False
+        elif counter == 0 and not up:
+            up = True
+
+        if up:
             counter += 1
+        else:
+            counter -= 1
             
-        time.sleep(0.3)
+        # time.sleep(0.3)
+        # print("\n")
+        # for motor in robot.motors:
+        #     print("Encoder: ", motor.read_encoder())
+        #     print("Multi loop angle: ", motor.get_multi_loop_angle())
+        #     print("Single loop angle: ", motor.get_single_loop_angle())
+        # print("\n")
+        # time.sleep(0.3)
 
 
 

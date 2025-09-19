@@ -40,7 +40,7 @@ class LaunchConfig:
 
 @dataclass
 class Args:
-    config_path: Tuple[str, ...] = ("~/eyeball/configs/eyeball_config.yaml",)
+    config_path: Tuple[str, ...] = ("~/eyeball/configs/viser_eyeball_config.yaml",)
 
 
 def main(args: Args) -> None:

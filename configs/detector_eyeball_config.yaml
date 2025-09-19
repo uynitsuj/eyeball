@@ -1,0 +1,21 @@
+_target_: eyeball.envs.launch.LaunchConfig
+
+sensors:
+  cameras:
+    eye_camera:
+        _target_: eyeball.sensors.cameras.camera.CameraNode
+        name: "eye_camera"
+        camera:
+            _target_: eyeball.sensors.cameras.opencv_camera.OpencvCamera
+            device_path: "/dev/video0"
+            resolution: [640, 480]
+            fps: 90
+            camera_type: "usb_camera"
+
+robots:
+  eye: ["robot_configs/eyeball.yaml"]
+
+agent:
+  _target_: eyeball.agents.policy_learning.detector_agent.DetectorAgent
+
+hz: 120.0

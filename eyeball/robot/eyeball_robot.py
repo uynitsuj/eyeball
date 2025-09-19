@@ -21,7 +21,7 @@ class Eyeball(Robot):
         self.robot = LKMotorChain(port_name)
         self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180", joint_limits_deg=(-40.0, 40.0))
         self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180", joint_limits_deg=(-40.0, 40.0))
-        self.speed = 800.0
+        self.speed = 1000.0
 
         self.total_dof = len(self.robot.motors)
 

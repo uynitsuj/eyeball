@@ -22,8 +22,11 @@ dependencies = [
     "ruff",
     "pyroki @ git+https://github.com/chungmin99/pyroki.git",
     "paramiko",
+    "torch",
+    "ultralytics",
+    "pandas",
+    "seaborn",
 ]
 
 [tool.setuptools]
 packages = { find = { include = ["eyeball*"] } }
-

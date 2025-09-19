@@ -9,17 +9,20 @@ import viser.extras
 import viser.transforms as vtf
 from dm_env.specs import Array
 
-from eyeball.agents.agent import Agent
+from eyeball.agents.agent import PolicyAgent
 from eyeball.sensors.cameras.camera_utils import obs_get_rgb, resize_with_center_crop
 from eyeball.utils.portal_utils import remote
+import torch
 
-class ViserEyeballAgent(Agent):
+class DetectorAgent(PolicyAgent):
     def __init__(self):
         self.viser_server = viser.ViserServer()
         self.obs = None
         self.real_vis_thread = threading.Thread(target=self._update_visualization)
         self.real_vis_thread.start()
         self._setup_visualization()
+        self.det_model = torch.hub.load("ultralytics/yolov5", "yolov5s")  # Default: yolov5s
+
 
     def _setup_visualization(self):
         self.eye_frame_real = self.viser_server.scene.add_frame("/eye_frame_real", show_axes=True, wxyz=vtf.SO3.from_rpy_radians(-np.pi/2, 0.0, 0.0).wxyz)
@@ -50,8 +53,33 @@ class ViserEyeballAgent(Agent):
                             aspect=1.0,
                             scale=0.75,
                         )
+                    results = self.det_model(rgb_images[key])
+
+                    """
+                    ['ims', 'pred', 'names', 'files', 'times', 'xyxy', 'xywh', 'xyxyn', 'xywhn', 'n', 't', 's', '__module__', '__doc__', '__init__', '_run', 'show', 'save', 'crop', 'render', 'pandas', 'tolist', 'print', '__len__', '__str__', '__repr__', '__dict__', '__weakref__', '__new__', '__hash__', '__getattribute__', '__setattr__', '__delattr__', '__lt__', '__le__', '__eq__', '__ne__', '__gt__', '__ge__', '__reduce_ex__', '__reduce__', '__getstate__', '__subclasshook__', '__init_subclass__', '__format__', '__sizeof__', '__dir__', '__class__']
+                    """
+
+                    # results.print()
+                    # print(results.pandas())
+                    # for result in results:
+                    boxes = results.xyxy  # Boxes object for bounding box outputs
+                    names = results.names
+                    pred = results.pred
+                    # print(results.__dir__())
+                    # print(boxes)
+                    # print(names)
+                    # print(pred)
+                    render = results.render()
+                    # print(render)
+                    # results.show()  # display to screen
+                    # results.save("result.jpg")  # save to disk
+
                     # resize viser images to 224x224
-                    viser_img = resize_with_center_crop(rgb_images[key], 224, 224)
+                    # print(render[0].shape)
+                    # print(rgb_images[key].shape)
+                    # print(rgb_images[key])
+                    # viser_img = resize_with_center_crop(rgb_images[key], 224, 224)
+                    viser_img = resize_with_center_crop(render[0], 224, 224)
 
                     self.viser_cam_img_handles[key].image = viser_img
                     self.viser_frustum_handles[key].image = viser_img
@@ -97,9 +125,11 @@ class ViserEyeballAgent(Agent):
         
         # print(cmd_pos)
 
+        cmd_pos = np.array([0.0, 0.0])
+
         action = {
             "eye": {
-                "pos": np.array(cmd_pos),
+                "pos": cmd_pos,
             }
         }
 

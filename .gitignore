@@ -3,3 +3,4 @@
 PKG-INFO
 *.egg
 requires.txt
+*.pt

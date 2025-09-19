@@ -184,3 +184,64 @@ def resize_with_pad(
         padded_images = padded_images[0]
 
     return padded_images
+
+def resize_with_center_crop(
+    images: np.ndarray,
+    height: int,
+    width: int,
+    interpolation: int = cv2.INTER_LINEAR,
+) -> np.ndarray:
+    """Resizes an image to a target height and width without distortion by center cropping.
+
+    Args:
+        images: Input image(s) with shape (h, w, c) or (b, h, w, c)
+        height: Target height
+        width: Target width
+        interpolation: OpenCV interpolation method (default: cv2.INTER_LINEAR)
+
+    Returns:
+        Resized and center-cropped image(s) with shape (height, width, c) or (b, height, width, c)
+    """
+    has_batch_dim = images.ndim == 4
+    if not has_batch_dim:
+        images = images[None]  # Add batch dimension
+
+    batch_size, cur_height, cur_width, channels = images.shape
+
+    # Calculate scaling ratio to ensure both dimensions are at least as large as target
+    # (we'll crop the excess, so we want to scale up to cover the target dimensions)
+    ratio = max(height / cur_height, width / cur_width)
+    resized_height = int(cur_height * ratio)
+    resized_width = int(cur_width * ratio)
+
+    # Process each image in the batch
+    cropped_images = np.zeros((batch_size, height, width, channels), dtype=images.dtype)
+
+    for i in range(batch_size):
+        # Resize image so that the smaller dimension fits the target
+        resized_img = cv2.resize(images[i], (resized_width, resized_height), interpolation=interpolation)
+
+        # Calculate crop offsets to center the crop
+        crop_h0 = (resized_height - height) // 2
+        crop_w0 = (resized_width - width) // 2
+
+        # Ensure we don't go out of bounds
+        crop_h0 = max(0, crop_h0)
+        crop_w0 = max(0, crop_w0)
+        crop_h1 = min(resized_height, crop_h0 + height)
+        crop_w1 = min(resized_width, crop_w0 + width)
+
+        # Extract the center crop
+        cropped_img = resized_img[crop_h0:crop_h1, crop_w0:crop_w1]
+
+        # Handle edge case where crop might be smaller than target (shouldn't happen with correct ratio calculation)
+        if cropped_img.shape[0] != height or cropped_img.shape[1] != width:
+            cropped_img = cv2.resize(cropped_img, (width, height), interpolation=interpolation)
+
+        cropped_images[i] = cropped_img
+
+    # Remove batch dimension if it wasn't in the input
+    if not has_batch_dim:
+        cropped_images = cropped_images[0]
+
+    return cropped_images

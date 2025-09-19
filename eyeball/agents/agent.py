@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Protocol
 
-from yam_realtime.agents.constants import ActionSpec
-from yam_realtime.utils.portal_utils import remote
+from eyeball.agents.constants import ActionSpec
+from eyeball.utils.portal_utils import remote
 
 
 class Agent(Protocol):

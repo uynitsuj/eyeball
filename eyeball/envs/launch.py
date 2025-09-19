@@ -11,19 +11,19 @@ from typing import Dict, Optional, Tuple, Union
 
 import tyro
 
-from yam_realtime.agents.agent import Agent
-from yam_realtime.envs.configs.instantiate import instantiate
-from yam_realtime.envs.configs.loader import DictLoader
-from yam_realtime.envs.robot_env import RobotEnv
-from yam_realtime.robots.robot import Robot
-from yam_realtime.robots.utils import Rate, Timeout
-from yam_realtime.sensors.cameras.camera import CameraDriver
-from yam_realtime.utils.launch_utils import (
+from eyeball.agents.agent import Agent
+from eyeball.envs.configs.instantiate import instantiate
+from eyeball.envs.configs.loader import DictLoader
+from eyeball.envs.robot_env import RobotEnv
+from eyeball.robot.robot import Robot
+from eyeball.robot.utils import Rate, Timeout
+from eyeball.sensors.cameras.camera import CameraDriver
+from eyeball.utils.launch_utils import (
     cleanup_processes,
     initialize_agent,
     initialize_robots,
     initialize_sensors,
-    setup_can_interfaces,
+    # setup_can_interfaces,
     setup_logging,
 )
 
@@ -40,7 +40,7 @@ class LaunchConfig:
 
 @dataclass
 class Args:
-    config_path: Tuple[str, ...] = ("~/yam_realtime/configs/yam_viser_bimanual.yaml",)
+    config_path: Tuple[str, ...] = ("~/eyeball/configs/eyeball_config.yaml",)
 
 
 def main(args: Args) -> None:
@@ -49,7 +49,7 @@ def main(args: Args) -> None:
 
     1. Load configuration from yaml file
     2. Initialize sensors (cameras, force sensors, etc.)
-    3. Setup CAN interfaces (for YAM communication)
+    3. Setup interfaces (for Eyeball communication)
     4. Initialize robots (hardware interface)
     5. Initialize agent (e.g. teleoperated control, policy control, etc.)
     6. Create environment
@@ -57,7 +57,7 @@ def main(args: Args) -> None:
     """
     # Setup logging and get logger
     logger = setup_logging()
-    logger.info("Starting YAM realtime control system...")
+    logger.info("Starting Eyeball realtime control system...")
 
     server_processes = []
 
@@ -72,7 +72,7 @@ def main(args: Args) -> None:
         logger.info("Initializing sensors...")
         camera_dict, camera_info = initialize_sensors(sensors_cfg, server_processes)
 
-        setup_can_interfaces()
+        # setup_can_interfaces()
 
         logger.info("Initializing robots...")
         robots = initialize_robots(main_config.robots, server_processes)

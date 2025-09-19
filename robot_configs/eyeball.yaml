@@ -1,0 +1,2 @@
+_target_: eyeball.robot.eyeball_robot.Eyeball
+port_name: ttyUSB0

@@ -737,6 +737,16 @@ class LKMotorChain(Serializer):
     def add_motor(self, 
                     id: hex, tolerance: float, 
                     name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360") -> Motor :
+        """
+        Add a motor to the chain.
+        id: hex address of the motor
+        tolerance: tolerance for the motor wait_stop function
+        name: pretty print name of the motor
+        CW: direction of the motor, defaults to True for clockwise, set to False for counterclockwise
+        zero_angle: zero angle of the motor
+        encoder_bits: number of bits of encoder resolution
+        angle_range: 180 for returning angles in range [-180, 180], 360 for [0, 360]
+        """
 
         new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle, encoder_bits, angle_range)
         self.motors.append(new_motor)

@@ -5,12 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "eyeball"
 version = "0.0.1"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "pyserial",
     "opencv-python",
-    "dm_env"
+    "viser",
+    "tyro",
+    "omegaconf",
+    "portal",
+    "dm-env==1.6",
+    "dm_control==1.0.30",
+    "dotdict==0.1",
+    "numpy==1.26.4",
+    "robot_descriptions",
+    "ruff",
+    "pyroki @ git+https://github.com/chungmin99/pyroki.git",
+    "paramiko",
 ]
 
 [tool.setuptools]

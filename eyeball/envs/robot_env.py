@@ -2,12 +2,12 @@ import time
 from typing import Any, Dict, Optional, Union
 
 import dm_env
-from i2rt.robots.robot import RobotType
+from eyeball.robot.robot import RobotType
 
-from yam_realtime.robots.robot import Robot
-from yam_realtime.robots.utils import Rate
-from yam_realtime.sensors.cameras.camera import CameraDriver
-from yam_realtime.utils.portal_utils import return_futures
+from eyeball.robot.robot import Robot
+from eyeball.robot.utils import Rate
+from eyeball.sensors.cameras.camera import CameraDriver
+from eyeball.utils.portal_utils import return_futures
 
 
 class RobotEnv(dm_env.Environment):

@@ -160,7 +160,7 @@ if __name__ == '__main__':
     # print(eye.get_joint_vel())
     # print(eye.get_joint_state())
 
-    ang = np.linspace(-40.0, 40.0, 4)
+    ang = np.linspace(-40.0, 40.0, 8)
 
     counter = 0
     up = True

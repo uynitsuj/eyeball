@@ -12,6 +12,7 @@ from dm_env.specs import Array
 from typing import Dict, Any
 from abc import abstractmethod
 from typing import Literal
+from typing import Optional
 
 CMD_HEADER                     = 0x3E
 CMD_ASK_MULTI_LOOP_ANGLE       = 0x92        #Read multi -loop Angle command
@@ -63,7 +64,7 @@ class Motor():
     
     tolerance: float               = 0.1 #deg. Used for different operatins like wait_stop Must be > 0.01!
 
-    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360"): # default to 15-bit encoder, can be overridden
+    def __init__(self, id: hex, serial_port, tolerance: float, name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360", joint_limits_deg: Optional[tuple[float, float]] = None): # default to 15-bit encoder, can be overridden
         assert id           >= 0
         assert tolerance    >= 0.01
         #assert serial_port  != None    #no check for case of simulation
@@ -78,6 +79,8 @@ class Motor():
         self.angle_range    = angle_range # for returns in "[0, 360]" or "[-180, 180]"
 
         self.CPR = 2**encoder_bits # counts per revolution
+        if joint_limits_deg is not None:
+            self.joint_limits_deg = joint_limits_deg
     
     def __read_response(self, bytes_expect: int):
         self.serial_port.timeout = 0.1
@@ -674,6 +677,8 @@ class Motor():
     # ---------- High-level shims (kept for compatibility) ----------
 
     def move_abs_multi(self, angle_deg: float, speed_dps: float | None = None) -> dict:
+        if self.joint_limits_deg is not None:
+            angle_deg = np.clip(angle_deg, self.joint_limits_deg[0], self.joint_limits_deg[1])
         return self.abs_multi_loop_angle_cmd1(angle_deg) if speed_dps is None \
             else self.abs_multi_loop_angle_speed(angle_deg, speed_dps)
 
@@ -736,7 +741,7 @@ class LKMotorChain(Serializer):
 
     def add_motor(self, 
                     id: hex, tolerance: float, 
-                    name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360") -> Motor :
+                    name: str, CW: bool, zero_angle: float, encoder_bits: int = 15, angle_range: Literal["360", "180"] = "360", joint_limits_deg: Optional[tuple[float, float]] = None) -> Motor :
         """
         Add a motor to the chain.
         id: hex address of the motor
@@ -746,9 +751,10 @@ class LKMotorChain(Serializer):
         zero_angle: zero angle of the motor
         encoder_bits: number of bits of encoder resolution
         angle_range: 180 for returning angles in range [-180, 180], 360 for [0, 360]
+        joint_limits_deg: joint limits in degrees
         """
 
-        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle, encoder_bits, angle_range)
+        new_motor = Motor(id, self.__port, tolerance, name, CW, zero_angle, encoder_bits, angle_range, joint_limits_deg)
         self.motors.append(new_motor)
         return new_motor
 

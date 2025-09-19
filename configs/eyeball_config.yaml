@@ -2,9 +2,9 @@ _target_: eyeball.envs.launch.LaunchConfig
 
 sensors:
   cameras:
-    eye:
+    eye_camera:
         _target_: eyeball.sensors.cameras.camera.CameraNode
-        name: "eye"
+        name: "eye_camera"
         camera:
             _target_: eyeball.sensors.cameras.opencv_camera.OpencvCamera
             device_path: "/dev/video0"
@@ -13,7 +13,9 @@ sensors:
             camera_type: "usb_camera"
 
 robots:
-  left: ["robot_configs/eyeball.yaml"]
+  eye: ["robot_configs/eyeball.yaml"]
 
 agent:
   _target_: eyeball.agents.teleoperation.viser_agent.ViserEyeballAgent
+
+hz: 120.0

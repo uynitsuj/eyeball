@@ -19,8 +19,9 @@ class Eyeball(Robot):
 
         print(f"Initializing Eyeball robot on port {port_name}")
         self.robot = LKMotorChain(port_name)
-        self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180")
-        self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180")
+        self.robot.add_motor(0x01, tolerance=0.1, name="motor1", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180", joint_limits_deg=(-40.0, 40.0))
+        self.robot.add_motor(0x02, tolerance=0.1, name="motor2", CW=True, zero_angle=0.0, encoder_bits=15, angle_range="180", joint_limits_deg=(-40.0, 40.0))
+        self.speed = 800.0
 
         self.total_dof = len(self.robot.motors)
 
@@ -71,9 +72,9 @@ class Eyeball(Robot):
         """Command the leader robot to a given state.
 
         Args:
-            joint_pos (np.ndarray): The state to command the leader robot to.
+            joint_pos (np.ndarray): The state to command the leader robot to in radians.
         """
-        ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos))
+        ret = self.robot.goto_abs_multi_loop_angles_speeds(list(joint_pos * 180.0 / np.pi), speeds=[self.speed, self.speed])
         for i, ret_val in enumerate(ret):
             self._last_joint_pos[i] = ret_val["angle_rad"]
             self._last_joint_vel[i] = ret_val["speed_radps"]
@@ -150,7 +151,7 @@ if __name__ == '__main__':
 
     eye.goto_zero()
 
-    eye.command_joint_pos(np.array([10.0, 20.0]))
+    eye.command_joint_pos(np.array([10.0 * np.pi / 180.0, 20.0 * np.pi / 180.0]))
 
     # print(eye.joint_pos_spec())
     # print(eye.joint_state_spec())
@@ -168,7 +169,7 @@ if __name__ == '__main__':
     spd = 1000.0
     while True:
         t0 = time.time()
-        eye.command_joint_pos(np.array([ang[counter], ang[counter]]))
+        eye.command_joint_pos(np.array([ang[counter] * np.pi / 180.0, ang[counter] * np.pi / 180.0]))
         # eye.command_joint_state({"joint_pos": np.array([ang[counter], ang[counter]]), "joint_vel": np.array([spd, spd])})
         print(eye.get_joint_state())
         t1 = time.time()

@@ -251,7 +251,8 @@ class SaccadingFixation(FixationMethod):
 
 
 class DetectorAgent(PolicyAgent):
-    def __init__(self, fixation_method: str = "saccading"):
+    def __init__(self, fixation_method: str = "saccading", 
+                 kp: float = 2.0, ki: float = 0.1, kd: float = 0.5):
         self.viser_server = viser.ViserServer()
         self.obs = None
         self.real_vis_thread = threading.Thread(target=self._update_visualization)
@@ -277,6 +278,20 @@ class DetectorAgent(PolicyAgent):
         self.det_model.agnostic = False  # NMS class-agnostic
         self.det_model.multi_label = False  # NMS multiple labels per box
         self.cmd_pos = np.array([0.0, 0.0])
+        
+        # PID Controller parameters
+        self.kp = kp  # Proportional gain
+        self.ki = ki  # Integral gain  
+        self.kd = kd  # Derivative gain
+        
+        # PID state variables
+        self.error_integral = np.array([0.0, 0.0])
+        self.previous_error = np.array([0.0, 0.0])
+        self.previous_time = None
+        
+        # Control parameters
+        self.eye_actuation_extent = 40 * np.pi / 180.0  # 40 degrees in radians
+        self.target_center = None  # Current target position in image coordinates
         
         # Initialize fixation method
         self.set_fixation_method(fixation_method)
@@ -359,7 +374,7 @@ class DetectorAgent(PolicyAgent):
 
     def _setup_visualization(self):
         self.eye_frame_real = self.viser_server.scene.add_frame("/eye_frame_real", show_axes=True, wxyz=vtf.SO3.from_rpy_radians(-np.pi/2, 0.0, 0.0).wxyz)
-        self.eye_frame_handle = self.viser_server.scene.add_transform_controls("eye_target_frame", disable_axes=True, disable_sliders=True, wxyz=vtf.SO3.from_rpy_radians(-np.pi/2, 0.0, 0.0).wxyz)
+        # self.eye_frame_handle = self.viser_server.scene.add_transform_controls("eye_target_frame", disable_axes=True, disable_sliders=True, wxyz=vtf.SO3.from_rpy_radians(-np.pi/2, 0.0, 0.0).wxyz)
 
         self.viser_cam_img_handles = {}
         self.viser_frustum_handles = {}
@@ -388,10 +403,6 @@ class DetectorAgent(PolicyAgent):
                         )
                     img_size = rgb_images[key].shape
                     results = self.det_model(rgb_images[key])
-
-                    """
-                    ['ims', 'pred', 'names', 'files', 'times', 'xyxy', 'xywh', 'xyxyn', 'xywhn', 'n', 't', 's', '__module__', '__doc__', '__init__', '_run', 'show', 'save', 'crop', 'render', 'pandas', 'tolist', 'print', '__len__', '__str__', '__repr__', '__dict__', '__weakref__', '__new__', '__hash__', '__getattribute__', '__setattr__', '__delattr__', '__lt__', '__le__', '__eq__', '__ne__', '__gt__', '__ge__', '__reduce_ex__', '__reduce__', '__getstate__', '__subclasshook__', '__init_subclass__', '__format__', '__sizeof__', '__dir__', '__class__']
-                    """
 
                     # df = results.pandas()
 
@@ -434,8 +445,8 @@ class DetectorAgent(PolicyAgent):
                         ])
 
                         self.cmd_pos = np.clip(self.cmd_pos, -eye_actuation_extent, eye_actuation_extent)
-                        print(40 * np.pi / 180.0)
-                        print(self.cmd_pos)
+                        # print(40 * np.pi / 180.0)
+                        # print(self.cmd_pos)
                     else:
                         print("No fixation target selected")
                     # print(render)
@@ -450,7 +461,7 @@ class DetectorAgent(PolicyAgent):
 
                     # print(f"Screen center offset: ({center_x - img_size[1]/2}, {center_y - img_size[0]/2})")
 
-                    viser_img = resize_with_center_crop(render_img, 224, 224)
+                    viser_img = resize_with_center_crop(render_img, 300, 300)
 
                     self.viser_cam_img_handles[key].image = viser_img
                     self.viser_frustum_handles[key].image = viser_img

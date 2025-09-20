@@ -79,7 +79,8 @@ class SmallestAreaFixation(FixationMethod):
 class SaccadingFixation(FixationMethod):
     """Fixates on objects using Hungarian matching for temporal tracking and saccading behavior."""
     
-    def __init__(self, saccade_interval: int = 60, max_distance_threshold: float = 100.0):
+    def __init__(self, saccade_interval: int = 60, max_distance_threshold: float = 100.0,
+                 area_weight: float = 0.8, confidence_weight: float = 0.0005):
         super().__init__()
         self.saccade_interval = saccade_interval  # frames between saccades
         self.max_distance_threshold = max_distance_threshold  # max distance for matching
@@ -87,6 +88,10 @@ class SaccadingFixation(FixationMethod):
         self.last_saccade_frame = 0
         self.tracked_objects = {}  # id -> {bbox, center, last_seen}
         self.next_object_id = 0
+        
+        # Saccade target selection weights
+        self.area_weight = area_weight  # Weight for preferring smaller objects
+        self.confidence_weight = confidence_weight  # Weight for preferring high confidence
     
     def _calculate_iou(self, box1: Dict, box2: Dict) -> float:
         """Calculate IoU between two bounding boxes."""
@@ -113,6 +118,49 @@ class SaccadingFixation(FixationMethod):
         center2_y = (box2['ymin'] + box2['ymax']) / 2
         
         return np.sqrt((center1_x - center2_x)**2 + (center1_y - center2_y)**2)
+    
+    def _calculate_saccade_score(self, bbox_data: Dict, all_targets: List) -> float:
+        """
+        Calculate a composite score for target selection combining area and confidence.
+        Higher score = more desirable target.
+        
+        Args:
+            bbox_data: Dictionary containing bbox info with 'bbox' key
+            all_targets: List of all available targets for normalization
+            
+        Returns:
+            Composite score (higher is better)
+        """
+        bbox = bbox_data['bbox']
+        
+        # Calculate area
+        area = (bbox['xmax'] - bbox['xmin']) * (bbox['ymax'] - bbox['ymin'])
+        
+        # Get confidence
+        confidence = bbox['confidence']
+        
+        # Normalize area score (smaller area = higher score)
+        if len(all_targets) > 1:
+            areas = [(target['bbox']['xmax'] - target['bbox']['xmin']) * 
+                    (target['bbox']['ymax'] - target['bbox']['ymin']) for _, target in all_targets]
+            min_area = min(areas)
+            max_area = max(areas)
+            if max_area > min_area:
+                # Invert area score so smaller areas get higher scores
+                area_score = 1.0 - (area - min_area) / (max_area - min_area)
+            else:
+                area_score = 1.0
+        else:
+            area_score = 1.0
+        
+        # Confidence is already normalized between 0-1
+        confidence_score = confidence
+        
+        # Combine scores with weights
+        composite_score = (self.area_weight * area_score + 
+                          self.confidence_weight * confidence_score)
+        
+        return composite_score
     
     def _update_tracking(self, detections_df):
         """Update object tracking using Hungarian matching."""
@@ -225,14 +273,30 @@ class SaccadingFixation(FixationMethod):
                 available_targets = [(self.current_target_id, self.tracked_objects[self.current_target_id])]
             
             if available_targets:
-                # Select target with highest confidence or random selection
-                target_id, target_data = max(available_targets, 
-                                           key=lambda x: x[1]['bbox']['confidence'])
+                # Select target using composite score (area + confidence)
+                print("available_targets", available_targets)
+                
+                # Calculate scores for all targets
+                scored_targets = []
+                for obj_id, obj_data in available_targets:
+                    score = self._calculate_saccade_score(obj_data, available_targets)
+                    scored_targets.append((obj_id, obj_data, score))
+                    
+                    # Debug info
+                    bbox = obj_data['bbox']
+                    area = (bbox['xmax'] - bbox['xmin']) * (bbox['ymax'] - bbox['ymin'])
+                    print(f"Target {obj_id}: area={area:.1f}, confidence={bbox['confidence']:.2f}, score={score:.3f}")
+                
+                # Select target with highest composite score
+                target_id, target_data, best_score = max(scored_targets, key=lambda x: x[2])
                 self.current_target_id = target_id
                 self.last_saccade_frame = self.frame_count
                 
+                bbox = target_data['bbox']
+                area = (bbox['xmax'] - bbox['xmin']) * (bbox['ymax'] - bbox['ymin'])
                 print(f"Saccading to object {target_id}: {target_data['bbox']['name']} "
-                      f"(confidence: {target_data['bbox']['confidence']:.2f})")
+                      f"(confidence: {target_data['bbox']['confidence']:.2f}, "
+                      f"area: {area:.1f}, score: {best_score:.3f})")
         
         # Return fixation point for current target
         if self.current_target_id in self.tracked_objects:
@@ -259,10 +323,9 @@ class DetectorAgent(PolicyAgent):
         self.real_vis_thread.start()
         self._setup_visualization()
 
-        self.draw = False
-
+        self.draw = True
         
-        # self.det_model = torch.hub.load("ultralytics/yolov5", "yolov5s")  # Default: yolov5s
+        self.det_model_objs = torch.hub.load("ultralytics/yolov5", "yolov5s")  # Default: yolov5s
 
         model_path = hf_hub_download(repo_id="arnabdhar/YOLOv8-Face-Detection", filename="model.pt")
 
@@ -296,27 +359,56 @@ class DetectorAgent(PolicyAgent):
         # Initialize fixation method
         self.set_fixation_method(fixation_method)
         
-    def set_fixation_method(self, method_name: str):
+    def set_fixation_method(self, method_name: str, **kwargs):
         """Hot-swap the fixation method."""
         if method_name == "smallest_area":
             self.fixation_method = SmallestAreaFixation()
         elif method_name == "saccading":
-            self.fixation_method = SaccadingFixation(saccade_interval=120, max_distance_threshold=100.0)
+            # Default parameters, can be overridden by kwargs
+            saccade_params = {
+                'saccade_interval': 120,
+                'max_distance_threshold': 100.0,
+                'area_weight': 0.7,  # Prefer smaller objects
+                'confidence_weight': 0.3  # Weight confidence less
+            }
+            saccade_params.update(kwargs)  # Override with any provided kwargs
+            self.fixation_method = SaccadingFixation(**saccade_params)
         else:
             raise ValueError(f"Unknown fixation method: {method_name}")
         
         print(f"Switched to fixation method: {method_name}")
+        if method_name == "saccading":
+            print(f"  Saccade parameters: {saccade_params}")
         
     def get_available_fixation_methods(self) -> List[str]:
         """Get list of available fixation methods."""
         return ["smallest_area", "saccading"]
     
-    def configure_saccading_fixation(self, saccade_interval: int = 120, max_distance_threshold: float = 100.0):
+    def configure_saccading_fixation(self, saccade_interval: int = None, max_distance_threshold: float = None,
+                                   area_weight: float = None, confidence_weight: float = None):
         """Configure parameters for saccading fixation method."""
         if isinstance(self.fixation_method, SaccadingFixation):
-            self.fixation_method.saccade_interval = saccade_interval
-            self.fixation_method.max_distance_threshold = max_distance_threshold
-            print(f"Updated saccading parameters: interval={saccade_interval}, threshold={max_distance_threshold}")
+            if saccade_interval is not None:
+                self.fixation_method.saccade_interval = saccade_interval
+            if max_distance_threshold is not None:
+                self.fixation_method.max_distance_threshold = max_distance_threshold
+            if area_weight is not None:
+                self.fixation_method.area_weight = area_weight
+            if confidence_weight is not None:
+                self.fixation_method.confidence_weight = confidence_weight
+                
+            # Normalize weights to sum to 1.0
+            if area_weight is not None or confidence_weight is not None:
+                total_weight = self.fixation_method.area_weight + self.fixation_method.confidence_weight
+                if total_weight > 0:
+                    self.fixation_method.area_weight /= total_weight
+                    self.fixation_method.confidence_weight /= total_weight
+                    
+            print(f"Updated saccading parameters:")
+            print(f"  interval={self.fixation_method.saccade_interval}")
+            print(f"  threshold={self.fixation_method.max_distance_threshold}")
+            print(f"  area_weight={self.fixation_method.area_weight:.2f}")
+            print(f"  confidence_weight={self.fixation_method.confidence_weight:.2f}")
         else:
             print("Current fixation method is not saccading. Switch to saccading first.")
     
@@ -411,6 +503,9 @@ class DetectorAgent(PolicyAgent):
                     
                     # Convert to pandas DataFrame compatible with fixation methods
                     df = self._detections_to_dataframe(detections)
+
+                    results_objs = self.det_model_objs(rgb_images[key])
+                    results_objs_df = results_objs.pandas().xyxy[0]
                     
                     # Use the original RGB image as base for visualization
                     render_img = rgb_images[key].copy()  # Make a writable copy
@@ -424,9 +519,19 @@ class DetectorAgent(PolicyAgent):
                             # Draw label
                             label = f"{detection['name']}: {detection['confidence']:.2f}"
                             cv2.putText(render_img, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+                    # print(results_objs_df)
+                    # print(df)
+
+
+                    # render_img = rgb_images[key].copy()
+                    render_img = results_objs.render()[0].copy()
+                    # print("render_img shape", render_img.shaps
+
+                    combined_df = pd.concat([results_objs_df, df])
                     
                     # Use the fixation method to select a target
-                    fixation_point = self.fixation_method.select_fixation_point(df, img_size)
+                    fixation_point = self.fixation_method.select_fixation_point(combined_df, img_size)
                     
                     if fixation_point is not None:
                         center_x, center_y = fixation_point
@@ -451,7 +556,6 @@ class DetectorAgent(PolicyAgent):
                         ])
 
                         derivative_error = (current_error - self.previous_error) / dt
-                        print("derivative_error", derivative_error)
 
                         self.error_integral += current_error * dt
                         self.error_integral = np.clip(self.error_integral, -self.eye_actuation_extent, self.eye_actuation_extent)

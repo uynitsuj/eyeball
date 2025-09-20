@@ -252,7 +252,7 @@ class SaccadingFixation(FixationMethod):
 
 class DetectorAgent(PolicyAgent):
     def __init__(self, fixation_method: str = "saccading", 
-                 kp: float = 2.0, ki: float = 0.1, kd: float = 0.5):
+                 kp: float = 0.5, ki: float = 0.1, kd: float = 0.005):
         self.viser_server = viser.ViserServer()
         self.obs = None
         self.real_vis_thread = threading.Thread(target=self._update_visualization)
@@ -438,11 +438,40 @@ class DetectorAgent(PolicyAgent):
                             cv2.circle(render_img, (center_x, center_y), 4, (255, 255, 255), -1)
                         
                         # Update command position based on fixation point
-                        eye_actuation_extent = 40 * np.pi / 180.0
-                        self.cmd_pos -= np.array([
-                            (center_x - img_size[1]/2) / img_size[1] * 0.5, 
-                            (center_y - img_size[0]/2) / img_size[0] * 0.5,
+                        if self.previous_time is None:
+                            self.previous_time = time.time()
+                            dt = 0.01
+                        else:
+                            dt = time.time() - self.previous_time
+                            self.previous_time = time.time()
+                        
+                        current_error = np.array([
+                            (center_x - img_size[1]/2) / img_size[1],
+                            (center_y - img_size[0]/2) / img_size[0],
                         ])
+
+                        derivative_error = (current_error - self.previous_error) / dt
+                        print("derivative_error", derivative_error)
+
+                        self.error_integral += current_error * dt
+                        self.error_integral = np.clip(self.error_integral, -self.eye_actuation_extent, self.eye_actuation_extent)
+
+                        self.cmd_pos -= np.array([
+                            (self.kp * current_error[0] + self.ki * self.error_integral[0] + self.kd * derivative_error[0]),
+                            (self.kp * current_error[1] + self.ki * self.error_integral[1] + self.kd * derivative_error[1]),
+                        ])
+
+                        print(self.cmd_pos)
+
+                        self.previous_error = current_error.copy()
+
+                        eye_actuation_extent = 40 * np.pi / 180.0
+                        # self.cmd_pos -= np.array([
+                        #     (center_x - img_size[1]/2) / img_size[1] * 0.5, 
+                        #     (center_y - img_size[0]/2) / img_size[0] * 0.5,
+                        # ])
+                        # self.cmd_pos -= current_error
+
 
                         self.cmd_pos = np.clip(self.cmd_pos, -eye_actuation_extent, eye_actuation_extent)
                         # print(40 * np.pi / 180.0)

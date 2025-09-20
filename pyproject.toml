@@ -26,7 +26,13 @@ dependencies = [
     "ultralytics",
     "pandas",
     "seaborn",
+    "huggingface_hub",
+    "supervision",
 ]
 
 [tool.setuptools]
 packages = { find = { include = ["eyeball*"] } }
+
+
+#[tool.uv.sources]
+#ultralytics = { path = "submodules/yolov8-face/ultralytics", editable = true }
